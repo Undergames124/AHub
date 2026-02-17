@@ -44,18 +44,14 @@ local function ND(t)
     local o,d=pcall(Drawing.new,t)
     if not o or not d then return nil end
     pcall(function() d.Visible=false end)
-    if t=="Text" or t=="Square" then pcall(function() d.Position=Vector2.new(-9999,-9999) end)
-    elseif t=="Circle" then pcall(function() d.Position=Vector2.new(-9999,-9999) end)
-    elseif t=="Line" then pcall(function() d.From=Vector2.new(-9999,-9999);d.To=Vector2.new(-9999,-9999) end)
-    elseif t=="Triangle" then pcall(function() d.PointA=Vector2.new(-9999,-9999);d.PointB=Vector2.new(-9999,-9999);d.PointC=Vector2.new(-9999,-9999) end) end
     return d
 end
 
 local function DS(d,p,v) if d then pcall(function() d[p]=v end) end end
-local function DV(d,v) if not d then return end;pcall(function() d.Visible=v end);if not v then pcall(function() if d.Position then d.Position=Vector2.new(-9999,-9999) end end);pcall(function() if d.From then d.From=Vector2.new(-9999,-9999);d.To=Vector2.new(-9999,-9999) end end) end end
+local function DV(d,v) if not d then return end;pcall(function() d.Visible=v end) end
 local function IV(d) if not d then return false end;local ok2,_=pcall(function() local _=d.Visible end);return ok2 end
 
-Notify("XENO","Loading v9.5...",3)
+Notify("XENO","Loading v9.6...",3)
 
 local Cfg={
     On=false,AimMode=Exec.canSilent and"silent"or"normal",
@@ -69,7 +65,7 @@ local Cfg={
     Vis={Dot=true,DotClr=Color3.fromRGB(255,50,50),DotSz=SC(6,10),Line=not IsMobile,LineClr=Color3.fromRGB(255,255,255),LineW=1.5},
     ESP={
         On=false,MaxDist=1500,ShowTeam=false,Style="Corner",
-        Render={FPS=0,Interp=true,InterpSpeed=18},
+        Render={FPS=30,Interp=true,InterpSpeed=18},
         Colors={
             EBox=Color3.fromRGB(255,50,50),EBoxBot=Color3.fromRGB(255,120,30),
             EName=Color3.fromRGB(255,255,255),EGlow=Color3.fromRGB(255,40,40),
@@ -106,7 +102,7 @@ local Cfg={
     WH={On=false,Fill=Color3.fromRGB(255,0,0),FT=0.5,Out=Color3.fromRGB(255,255,255),OT=0,
         TFill=Color3.fromRGB(0,255,0),TOut=Color3.fromRGB(200,255,200),UseTC=true,ShowTeam=false,
         BotFill=Color3.fromRGB(255,160,0),BotOut=Color3.fromRGB(255,200,100),ShowBots=true},
-    Wall={Thresh=0.5,MaxPierce=6},
+    Wall={Thresh=0.5,MaxPierce=4},
     Checks={Team=true,Alive=true,Wall=true,FF=true,Dist=true},
     Limits={MaxD=800,MaxA=SC(75,90),MinD=5},
     TP={On=false,Dist=12,Unlock=true},Spin={On=false,Spd=15},Speed={On=false,Mult=1.5},
@@ -120,6 +116,7 @@ local S={
     fire={last=0,method="none"},draw={},espC={},whC={},
     conns={},gui=nil,mobFrame=nil,subMenu=nil,spinAng=0,
     botCache={},botTick=0,realPlayers={},realPlayersTick=0,
+    targetCache={},targetCacheTick=0,espUpdateTick=0,visCache={},visCacheTick=0,
 }
 
 local function W2S(pos) if not Cam then return nil,0,false end;local o,v,on=pcall(Cam.WorldToViewportPoint,Cam,pos);if not o or not v then return nil,0,false end;return on and Vector2.new(v.X,v.Y) or nil,v.Z,on end
@@ -147,19 +144,18 @@ local function CanSee(part,myCh)
     end;return false
 end
 
+local function CanSeeCached(key,part,myCh)
+    local now=tick()
+    local cached=S.visCache[key]
+    if cached and now-cached.t<0.2 then return cached.v end
+    local result=CanSee(part,myCh)
+    S.visCache[key]={v=result,t=now}
+    return result
+end
+
 local Bot = {}
 
 function Bot.IsRealPlayer(plrObj)
-    local childCount = 0
-    for _, child in ipairs(plrObj:GetChildren()) do
-        childCount = childCount + 1
-    end
-    if childCount <= 1 then
-        local hasOnlyAv = plrObj:FindFirstChild("Av") ~= nil
-        if hasOnlyAv and childCount == 1 then
-            return false
-        end
-    end
     if plrObj:FindFirstChild("Backpack") then return true end
     if plrObj:FindFirstChild("StarterGear") then return true end
     if plrObj:FindFirstChild("PlayerGui") then return true end
@@ -168,134 +164,81 @@ function Bot.IsRealPlayer(plrObj)
     if plrObj:FindFirstChild("RemoteFunction") then return true end
     if plrObj:FindFirstChild("RemoteEvent") then return true end
     if plrObj:FindFirstChild("CanSVIP") then return true end
-    for i = 1, 5 do
+    for i=1,5 do
         if plrObj:FindFirstChild("Streak"..i) then return true end
     end
-    return false
+    local childCount=0
+    for _ in ipairs(plrObj:GetChildren()) do childCount=childCount+1 end
+    if childCount<=1 and plrObj:FindFirstChild("Av") then return false end
+    if childCount==0 then return false end
+    return true
 end
 
 function Bot.RefreshRealPlayers()
-    if tick() - S.realPlayersTick < 0.5 then return end
-    S.realPlayersTick = tick()
-    S.realPlayers = {}
-    for _, p in ipairs(Players:GetPlayers()) do
+    if tick()-S.realPlayersTick<1 then return end
+    S.realPlayersTick=tick()
+    S.realPlayers={}
+    for _,p in ipairs(Players:GetPlayers()) do
         if Bot.IsRealPlayer(p) then
-            S.realPlayers[p.Name] = true
+            S.realPlayers[p.Name]=true
         end
     end
 end
 
 function Bot.IsBotPlayer(plrObj)
     if not plrObj then return false end
-    if plrObj == Plr then return false end
+    if plrObj==Plr then return false end
     return not Bot.IsRealPlayer(plrObj)
 end
 
 function Bot.IsAlive(model)
-    if not model or not model:IsA("Model") then return false, nil, nil end
-    local hum = model:FindFirstChildOfClass("Humanoid")
-    if not hum or hum.Health <= 0 then return false, nil, nil end
-    local root = model:FindFirstChild("HumanoidRootPart") or model:FindFirstChild("Torso") or model:FindFirstChild("UpperTorso") or model.PrimaryPart
-    if not root then return false, nil, nil end
-    return true, hum, root
-end
-
-function Bot.ScanPlayersForBots()
-    local bots = {}
-    for _, p in ipairs(Players:GetPlayers()) do
-        if p == Plr then continue end
-        if Bot.IsBotPlayer(p) then
-            local ch = p.Character
-            if ch and ch.Parent then
-                local alive, hum, root = Bot.IsAlive(ch)
-                if alive then
-                    table.insert(bots, {model=ch, hum=hum, root=root, name=p.Name, playerObj=p})
-                end
-            end
-        end
-    end
-    return bots
-end
-
-function Bot.ScanWorkspaceForBots()
-    Bot.RefreshRealPlayers()
-    local bots = {}
-    for _, child in ipairs(WS:GetChildren()) do
-        if not child:IsA("Model") then continue end
-        if child.Name == Plr.Name then continue end
-        if S.realPlayers[child.Name] then continue end
-        local inPlayers = Players:FindFirstChild(child.Name)
-        if inPlayers then continue end
-        local alive, hum, root = Bot.IsAlive(child)
-        if alive then
-            table.insert(bots, {model=child, hum=hum, root=root, name=child.Name, playerObj=nil})
-        end
-    end
-    return bots
-end
-
-function Bot.Scan()
-    if tick() - S.botTick < 0.3 then return S.botCache end
-    S.botTick = tick()
-    S.botCache = {}
-    local playerBots = Bot.ScanPlayersForBots()
-    for _, b in ipairs(playerBots) do
-        table.insert(S.botCache, b)
-    end
-    local wsBots = Bot.ScanWorkspaceForBots()
-    for _, b in ipairs(wsBots) do
-        local already = false
-        for _, existing in ipairs(S.botCache) do
-            if existing.model == b.model then already = true; break end
-        end
-        if not already then
-            table.insert(S.botCache, b)
-        end
-    end
-    return S.botCache
+    if not model or not model:IsA("Model") then return false,nil,nil end
+    local hum=model:FindFirstChildOfClass("Humanoid")
+    if not hum or hum.Health<=0 then return false,nil,nil end
+    local root=model:FindFirstChild("HumanoidRootPart") or model:FindFirstChild("Torso") or model:FindFirstChild("UpperTorso") or model.PrimaryPart
+    if not root then return false,nil,nil end
+    return true,hum,root
 end
 
 function Bot.GetAllTargets()
-    local targets = {}
+    local now=tick()
+    if now-S.targetCacheTick<0.25 then return S.targetCache end
+    S.targetCacheTick=now
     Bot.RefreshRealPlayers()
-    for _, tp in ipairs(Players:GetPlayers()) do
-        if tp == Plr then continue end
+    local targets={}
+    for _,tp in ipairs(Players:GetPlayers()) do
+        if tp==Plr then continue end
+        local ch=tp.Character
+        if not ch or not ch.Parent then continue end
+        local alive=Bot.IsAlive(ch)
+        if not alive then continue end
         if Bot.IsBotPlayer(tp) then
-            if Cfg.ESP.Bots.On or Cfg.ESP.Bots.AimAt then
-                local ch = tp.Character
-                if ch and ch.Parent then
-                    local alive = Bot.IsAlive(ch)
-                    if alive then
-                        table.insert(targets, {model=ch, player=tp, isBot=true, name="BOT ["..tp.Name.."]"})
-                    end
-                end
-            end
+            table.insert(targets,{model=ch,player=tp,isBot=true,name="BOT"})
         else
-            local ch = tp.Character
-            if ch and ch.Parent then
-                local alive = Bot.IsAlive(ch)
-                if alive then
-                    table.insert(targets, {model=ch, player=tp, isBot=false, name=tp.DisplayName or tp.Name})
-                end
-            end
+            table.insert(targets,{model=ch,player=tp,isBot=false,name=tp.DisplayName or tp.Name})
         end
     end
-    if Cfg.ESP.Bots.On or Cfg.ESP.Bots.AimAt then
-        local wsBots = Bot.ScanWorkspaceForBots()
-        for _, b in ipairs(wsBots) do
-            local already = false
-            for _, existing in ipairs(targets) do
-                if existing.model == b.model then already = true; break end
+    for _,child in ipairs(WS:GetChildren()) do
+        if not child:IsA("Model") then continue end
+        if child.Name==Plr.Name then continue end
+        if Players:FindFirstChild(child.Name) then continue end
+        if S.realPlayers[child.Name] then continue end
+        local alive,hum,root=Bot.IsAlive(child)
+        if alive then
+            local already=false
+            for _,t in ipairs(targets) do
+                if t.model==child then already=true;break end
             end
             if not already then
-                table.insert(targets, {model=b.model, player=nil, isBot=true, name="BOT ["..b.name.."]"})
+                table.insert(targets,{model=child,player=nil,isBot=true,name="BOT"})
             end
         end
     end
+    S.targetCache=targets
     return targets
 end
 
-local Res = {}
+local Res={}
 function Res.HP(ch) if not ch then return 0,100 end;local h=ch:FindFirstChildOfClass("Humanoid");if h then return h.Health,h.MaxHealth end;return 100,100 end
 function Res.Root(ch) if not ch then return nil end;return ch:FindFirstChild("HumanoidRootPart") or ch:FindFirstChild("Torso") or ch:FindFirstChild("UpperTorso") or ch.PrimaryPart end
 
@@ -405,14 +348,13 @@ local B15={{"Head","UpperTorso"},{"UpperTorso","RightUpperArm"},{"RightUpperArm"
 local B6={{"Head","Torso"},{"Torso","Right Arm"},{"Torso","Left Arm"},{"Torso","Right Leg"},{"Torso","Left Leg"}}
 
 local E={}
-function E.New(key) if DEAD or S.espC[key] then return end;if not drawOK then return end;local o={valid=true,curBB=nil,lastUpdate=0,smoothHP=nil,isVis=false,lastVisTick=0,scanY=0,cL={},cO={},glow={},cyber={},grad={},bones={}};for i=1,8 do o.cL[i]=ND("Line");o.cO[i]=ND("Line") end;for i=1,12 do o.glow[i]=ND("Line") end;for i=1,13 do o.cyber[i]=ND("Line") end;for i=1,8 do o.grad[i]=ND("Line") end;o.bI=ND("Square");o.bO=ND("Square");DS(o.bI,"Filled",false);DS(o.bO,"Filled",false);o.nT=ND("Text");DS(o.nT,"Outline",true);DS(o.nT,"Size",14);o.nSh=ND("Text");DS(o.nSh,"Outline",false);DS(o.nSh,"Size",14);o.dT=ND("Text");DS(o.dT,"Outline",true);DS(o.dT,"Size",12);o.wT=ND("Text");DS(o.wT,"Outline",true);DS(o.wT,"Size",11);o.flT=ND("Text");DS(o.flT,"Outline",true);DS(o.flT,"Size",11);o.hBo=ND("Square");DS(o.hBo,"Filled",false);DS(o.hBo,"Color",Color3.new(0,0,0));DS(o.hBo,"Thickness",1);o.hBg=ND("Square");DS(o.hBg,"Filled",true);o.hF=ND("Square");DS(o.hF,"Filled",true);o.hT=ND("Text");DS(o.hT,"Outline",true);DS(o.hT,"Size",11);DS(o.hT,"Center",true);o.tr=ND("Line");o.trO=ND("Line");o.arr=ND("Triangle");DS(o.arr,"Filled",true);o.hdot=ND("Circle");DS(o.hdot,"Filled",true);DS(o.hdot,"NumSides",16);o.hdotO=ND("Circle");DS(o.hdotO,"Filled",false);DS(o.hdotO,"NumSides",16);for i=1,#B15 do o.bones[i]=ND("Line") end;S.espC[key]=o end
+function E.New(key) if DEAD or S.espC[key] then return end;if not drawOK then return end;local o={valid=true,curBB=nil,lastUpdate=0,smoothHP=nil,isVis=true,lastVisTick=0,scanY=0,cL={},cO={},glow={},cyber={},grad={},bones={}};for i=1,8 do o.cL[i]=ND("Line");o.cO[i]=ND("Line") end;for i=1,12 do o.glow[i]=ND("Line") end;for i=1,13 do o.cyber[i]=ND("Line") end;for i=1,8 do o.grad[i]=ND("Line") end;o.bI=ND("Square");o.bO=ND("Square");DS(o.bI,"Filled",false);DS(o.bO,"Filled",false);o.nT=ND("Text");DS(o.nT,"Outline",true);DS(o.nT,"Size",14);o.nSh=ND("Text");DS(o.nSh,"Outline",false);DS(o.nSh,"Size",14);o.dT=ND("Text");DS(o.dT,"Outline",true);DS(o.dT,"Size",12);o.wT=ND("Text");DS(o.wT,"Outline",true);DS(o.wT,"Size",11);o.flT=ND("Text");DS(o.flT,"Outline",true);DS(o.flT,"Size",11);o.hBo=ND("Square");DS(o.hBo,"Filled",false);DS(o.hBo,"Color",Color3.new(0,0,0));DS(o.hBo,"Thickness",1);o.hBg=ND("Square");DS(o.hBg,"Filled",true);o.hF=ND("Square");DS(o.hF,"Filled",true);o.hT=ND("Text");DS(o.hT,"Outline",true);DS(o.hT,"Size",11);DS(o.hT,"Center",true);o.tr=ND("Line");o.trO=ND("Line");o.arr=ND("Triangle");DS(o.arr,"Filled",true);o.hdot=ND("Circle");DS(o.hdot,"Filled",true);DS(o.hdot,"NumSides",16);o.hdotO=ND("Circle");DS(o.hdotO,"Filled",false);DS(o.hdotO,"NumSides",16);for i=1,#B15 do o.bones[i]=ND("Line") end;S.espC[key]=o end
 function E.HideAll(o) if not o then return end;for i=1,8 do DV(o.cL[i],false);DV(o.cO[i],false) end;for i=1,12 do DV(o.glow[i],false) end;for i=1,13 do DV(o.cyber[i],false) end;for i=1,8 do DV(o.grad[i],false) end;DV(o.bI,false);DV(o.bO,false);DV(o.nT,false);DV(o.nSh,false);DV(o.dT,false);DV(o.wT,false);DV(o.flT,false);DV(o.hBo,false);DV(o.hBg,false);DV(o.hF,false);DV(o.hT,false);DV(o.tr,false);DV(o.trO,false);DV(o.arr,false);DV(o.hdot,false);DV(o.hdotO,false);for _,b in ipairs(o.bones) do DV(b,false) end end
 function E.Del(key) local o=S.espC[key];if not o then return end;o.valid=false;E.HideAll(o);for i=1,8 do Kill(o.cL[i]);Kill(o.cO[i]) end;for i=1,12 do Kill(o.glow[i]) end;for i=1,13 do Kill(o.cyber[i]) end;for i=1,8 do Kill(o.grad[i]) end;Kill(o.bI);Kill(o.bO);Kill(o.nT);Kill(o.nSh);Kill(o.dT);Kill(o.wT);Kill(o.flT);Kill(o.hBo);Kill(o.hBg);Kill(o.hF);Kill(o.hT);Kill(o.tr);Kill(o.trO);Kill(o.arr);Kill(o.hdot);Kill(o.hdotO);for _,b in ipairs(o.bones) do Kill(b) end;S.espC[key]=nil end
 function E.DelAll() local keys={};for p in pairs(S.espC) do table.insert(keys,p) end;for _,p in ipairs(keys) do pcall(E.Del,p) end;S.espC={} end
 
 function E.BB(ch) if not ch or not Cam then return nil end;local rp=Res.Root(ch);if not rp then return nil end;local head=ch:FindFirstChild("Head");local topY=head and(head.Position.Y+head.Size.Y/2+0.5)or(rp.Position.Y+3);local botY=rp.Position.Y-3;local topSP,topZ,topOn=W2S(Vector3.new(rp.Position.X,topY,rp.Position.Z));local botSP,botZ,botOn=W2S(Vector3.new(rp.Position.X,botY,rp.Position.Z));if not topOn or not botOn or not topSP or not botSP then return nil end;if topZ<=0 or botZ<=0 then return nil end;local h=math.abs(botSP.Y-topSP.Y);if h<4 then return nil end;local cx=topSP.X;if cx~=cx or topSP.Y~=topSP.Y then return nil end;return{x=cx-h*0.3,y=topSP.Y,w=h*0.6,h=h,top=topSP,bot=botSP,rp=rp.Position} end
 function E.IntBB(o,nb,dt) if not Cfg.ESP.Render.Interp or not o.curBB or not nb then o.curBB=nb;return nb end;local sp=math.clamp(Cfg.ESP.Render.InterpSpeed*dt,0,1);local cb=o.curBB;o.curBB={x=cb.x+(nb.x-cb.x)*sp,y=cb.y+(nb.y-cb.y)*sp,w=cb.w+(nb.w-cb.w)*sp,h=cb.h+(nb.h-cb.h)*sp,top=cb.top:Lerp(nb.top,sp),bot=cb.bot:Lerp(nb.bot,sp),rp=cb.rp:Lerp(nb.rp,sp)};return o.curBB end
-function E.ShouldR(o) local R=Cfg.ESP.Render;if R.FPS<=0 then return true end;if tick()-o.lastUpdate<1/R.FPS then return false end;o.lastUpdate=tick();return true end
 
 local function HideBox(o) for i=1,8 do DV(o.cL[i],false);DV(o.cO[i],false) end;for i=1,12 do DV(o.glow[i],false) end;for i=1,13 do DV(o.cyber[i],false) end;for i=1,8 do DV(o.grad[i],false) end;DV(o.bI,false);DV(o.bO,false) end
 local function DrawCorner(o,bx,by,bw,bh,clr,oClr) DV(o.bI,false);DV(o.bO,false);for i=1,12 do DV(o.glow[i],false) end;for i=1,13 do DV(o.cyber[i],false) end;for i=1,8 do DV(o.grad[i],false) end;local cl=math.max(bw,bh)*Cfg.ESP.Box.CL;local pts={{Vector2.new(bx,by),Vector2.new(bx+cl,by)},{Vector2.new(bx,by),Vector2.new(bx,by+cl)},{Vector2.new(bx+bw,by),Vector2.new(bx+bw-cl,by)},{Vector2.new(bx+bw,by),Vector2.new(bx+bw,by+cl)},{Vector2.new(bx,by+bh),Vector2.new(bx+cl,by+bh)},{Vector2.new(bx,by+bh),Vector2.new(bx,by+bh-cl)},{Vector2.new(bx+bw,by+bh),Vector2.new(bx+bw-cl,by+bh)},{Vector2.new(bx+bw,by+bh),Vector2.new(bx+bw,by+bh-cl)}};for i=1,8 do if IV(o.cO[i])and Cfg.ESP.Box.Outline then DS(o.cO[i],"From",pts[i][1]);DS(o.cO[i],"To",pts[i][2]);DS(o.cO[i],"Color",oClr);DS(o.cO[i],"Thickness",Cfg.ESP.Box.W+Cfg.ESP.Box.OW);DV(o.cO[i],true) else DV(o.cO[i],false) end;if IV(o.cL[i]) then DS(o.cL[i],"From",pts[i][1]);DS(o.cL[i],"To",pts[i][2]);DS(o.cL[i],"Color",clr);DS(o.cL[i],"Thickness",Cfg.ESP.Box.W);DV(o.cL[i],true) end end end
@@ -422,7 +364,7 @@ local function DrawCyber(o,bx,by,bw,bh,clr,accent) for i=1,8 do DV(o.cL[i],false
 local function DrawGradient(o,bx,by,bw,bh,topC,botC) for i=1,8 do DV(o.cO[i],false) end;DV(o.bI,false);DV(o.bO,false);for i=1,12 do DV(o.glow[i],false) end;for i=1,13 do DV(o.cyber[i],false) end;local steps=math.min(Cfg.ESP.Grad.Steps,4);local segH=bh/steps;for i=1,steps do local t=(i-1)/math.max(steps-1,1);local clr=Lerp3(topC,botC,t);local y1=by+segH*(i-1);local y2=by+segH*i;local li=(i-1)*2+1;local ri=li+1;if li<=8 and IV(o.grad[li]) then DS(o.grad[li],"From",Vector2.new(bx,y1));DS(o.grad[li],"To",Vector2.new(bx,y2));DS(o.grad[li],"Color",clr);DS(o.grad[li],"Thickness",Cfg.ESP.Box.W);DV(o.grad[li],true) end;if ri<=8 and IV(o.grad[ri]) then DS(o.grad[ri],"From",Vector2.new(bx+bw,y1));DS(o.grad[ri],"To",Vector2.new(bx+bw,y2));DS(o.grad[ri],"Color",clr);DS(o.grad[ri],"Thickness",Cfg.ESP.Box.W);DV(o.grad[ri],true) end end;if IV(o.cL[1]) then DS(o.cL[1],"From",Vector2.new(bx,by));DS(o.cL[1],"To",Vector2.new(bx+bw,by));DS(o.cL[1],"Color",topC);DS(o.cL[1],"Thickness",Cfg.ESP.Box.W);DV(o.cL[1],true) end;if IV(o.cL[2]) then DS(o.cL[2],"From",Vector2.new(bx,by+bh));DS(o.cL[2],"To",Vector2.new(bx+bw,by+bh));DS(o.cL[2],"Color",botC);DS(o.cL[2],"Thickness",Cfg.ESP.Box.W);DV(o.cL[2],true) end;for i=3,8 do DV(o.cL[i],false) end end
 
 local function ShowText(d,pos,txt,clr,sz,center,outline) if not IV(d) then return end;DS(d,"Text",txt);DS(d,"Color",clr);DS(d,"Size",sz);DS(d,"Center",center);if outline~=nil then DS(d,"Outline",outline) end;DS(d,"Position",pos);pcall(function() d.Visible=true end) end
-local function HideText(d) if not IV(d) then return end;pcall(function() d.Visible=false end);pcall(function() d.Position=Vector2.new(-9999,-9999) end) end
+local function HideText(d) if not IV(d) then return end;pcall(function() d.Visible=false end) end
 
 function E.Render(key,ch,displayName,isBot,isTeam,dt)
     if DEAD then return end;local o=S.espC[key];if not o or not o.valid then return end;dt=dt or 0.016
@@ -432,8 +374,7 @@ function E.Render(key,ch,displayName,isBot,isTeam,dt)
     if not isBot and isTeam and not Cfg.ESP.ShowTeam then E.HideAll(o);return end
     local dist=S.me.root and(rootP.Position-S.me.root.Position).Magnitude or 0
     if dist>Cfg.ESP.MaxDist then E.HideAll(o);return end
-    local now=tick();if now-o.lastVisTick>0.15 then o.isVis=CanSee(rootP,S.me.char);o.lastVisTick=now end
-    E.ShouldR(o)
+    local now=tick();if now-o.lastVisTick>0.3 then o.isVis=CanSeeCached(key,rootP,S.me.char);o.lastVisTick=now end
     local rawBB=E.BB(ch)
     if not rawBB then E.HideAll(o)
         if Cfg.ESP.OFS.On and S.me.root and IV(o.arr) then local raw=W2SR(rootP.Position);if raw then local sc2=SCC();local d2=raw-sc2;if d2.Magnitude>5 then d2=d2.Unit;local ap=sc2+d2*Cfg.ESP.OFS.Rad;local perp=Vector2.new(-d2.Y,d2.X);local sz=Cfg.ESP.OFS.Sz;DS(o.arr,"PointA",ap+d2*sz);DS(o.arr,"PointB",ap-d2*sz*0.5+perp*sz*0.4);DS(o.arr,"PointC",ap-d2*sz*0.5-perp*sz*0.4);DS(o.arr,"Color",Cfg.ESP.Colors.OFSClr);pcall(function() o.arr.Visible=true end) else DV(o.arr,false) end else DV(o.arr,false) end end;return
@@ -461,23 +402,24 @@ function E.Render(key,ch,displayName,isBot,isTeam,dt)
 end
 
 function E.UpdateAll(dt)
-    if DEAD then return end;local activeKeys={}
-    local allTargets = Bot.GetAllTargets()
-    for _, tgt in ipairs(allTargets) do
+    if DEAD then return end
+    local now=tick()
+    local fps=Cfg.ESP.Render.FPS
+    if fps>0 and now-S.espUpdateTick<1/fps then return end
+    S.espUpdateTick=now
+    local activeKeys={}
+    local allTargets=Bot.GetAllTargets()
+    for _,tgt in ipairs(allTargets) do
         local key
         if tgt.isBot then
-            if tgt.player then
-                key = "bot_"..tgt.player.UserId
-            else
-                key = "bot_ws_"..tgt.model.Name
-            end
+            if tgt.player then key="bot_"..tgt.player.UserId else key="bot_ws_"..tostring(tgt.model):sub(1,30) end
         else
-            key = "p_"..tgt.player.UserId
+            key="p_"..tgt.player.UserId
         end
-        activeKeys[key] = true
+        activeKeys[key]=true
         if not S.espC[key] then E.New(key) end
-        local isTeam = (not tgt.isBot and tgt.player) and TeamEq(Plr, tgt.player) or false
-        pcall(E.Render, key, tgt.model, tgt.name, tgt.isBot, isTeam, dt)
+        local isTeam=(not tgt.isBot and tgt.player) and TeamEq(Plr,tgt.player) or false
+        pcall(E.Render,key,tgt.model,tgt.name,tgt.isBot,isTeam,dt)
     end
     local rem={};for k in pairs(S.espC) do if not activeKeys[k] then table.insert(rem,k) end end
     for _,k in ipairs(rem) do pcall(E.Del,k) end
@@ -489,24 +431,16 @@ function WH.Kill(key) local h=S.whC[key];if h then pcall(function() h:Destroy() 
 function WH.KillAll() local keys={};for p in pairs(S.whC) do table.insert(keys,p) end;for _,p in ipairs(keys) do WH.Kill(p) end;S.whC={} end
 function WH.UpdateAll()
     if DEAD or not Cfg.WH.On then WH.KillAll();return end;local activeKeys={}
-    local allTargets = Bot.GetAllTargets()
-    for _, tgt in ipairs(allTargets) do
+    local allTargets=Bot.GetAllTargets()
+    for _,tgt in ipairs(allTargets) do
         local key
         if tgt.isBot then
-            if tgt.player then key = "bot_"..tgt.player.UserId else key = "bot_ws_"..tgt.model.Name end
-            if Cfg.WH.ShowBots then
-                activeKeys[key] = true
-                if not S.whC[key] then WH.Make(key, tgt.model, true, false) end
-            end
+            if tgt.player then key="bot_"..tgt.player.UserId else key="bot_ws_"..tostring(tgt.model):sub(1,30) end
+            if Cfg.WH.ShowBots then activeKeys[key]=true;if not S.whC[key] then WH.Make(key,tgt.model,true,false) end end
         else
-            key = "p_"..tgt.player.UserId
-            local isTeam = TeamEq(Plr, tgt.player)
-            local show = true
-            if isTeam and not Cfg.WH.ShowTeam then show = false end
-            if show then
-                activeKeys[key] = true
-                if not S.whC[key] then WH.Make(key, tgt.model, false, isTeam) end
-            end
+            key="p_"..tgt.player.UserId
+            local isTeam=TeamEq(Plr,tgt.player)
+            if not isTeam or Cfg.WH.ShowTeam then activeKeys[key]=true;if not S.whC[key] then WH.Make(key,tgt.model,false,isTeam) end end
         end
     end
     local rem={};for k in pairs(S.whC) do if not activeKeys[k] then table.insert(rem,k) end end;for _,k in ipairs(rem) do WH.Kill(k) end
@@ -514,7 +448,7 @@ end
 
 local HUD={}
 function HUD.Create() HUD.Destroy();if not drawOK then return end;local d=S.draw;d.fov=ND("Circle");DS(d.fov,"Filled",false);DS(d.fov,"NumSides",64);d.line=ND("Line");d.dot=ND("Circle");DS(d.dot,"Filled",true);DS(d.dot,"NumSides",16);d.st=ND("Text");DS(d.st,"Center",false);DS(d.st,"Outline",true);DS(d.st,"Size",SC(14,12));DS(d.st,"Position",Vector2.new(10,SC(10,40)));pcall(function() d.st.Visible=true end);d.inf=ND("Text");DS(d.inf,"Center",false);DS(d.inf,"Outline",true);DS(d.inf,"Size",12);DS(d.inf,"Position",Vector2.new(10,SC(28,56)));DS(d.inf,"Color",Color3.fromRGB(180,180,180));if not IsMobile then pcall(function() d.inf.Visible=true end) end end
-function HUD.Update() if DEAD or not drawOK then return end;local c=SCC();local d=S.draw;if IV(d.fov) then DS(d.fov,"Position",c);DS(d.fov,"Radius",Cfg.FOV.R);DS(d.fov,"Color",Cfg.FOV.Color);DS(d.fov,"Transparency",Cfg.FOV.Trans);DS(d.fov,"Thickness",Cfg.FOV.Thick);pcall(function() d.fov.Visible=(Cfg.On and Cfg.FOV.On and Cfg.FOV.Show) end) end;if IV(d.st) then local ps={"XENO",Cfg.On and"["..(({normal="AIM",snap="SNAP",flick="FLICK",silent="SILENT"})[Cfg.AimMode]or"?").."]"or"[OFF]"};if Cfg.ESP.On then table.insert(ps,"["..Cfg.ESP.Style.."]") end;if S.tgt.part and Cfg.On then table.insert(ps,string.format("| %s %.0fHP",S.tgt.isBot and"BOT"or S.tgt.name,S.tgt.hp)) end;DS(d.st,"Text",table.concat(ps," "));DS(d.st,"Color",Cfg.On and Color3.fromRGB(100,255,100)or Color3.fromRGB(255,100,100)) end;if not IsMobile and IV(d.inf) then local botCount = #Bot.Scan();DS(d.inf,"Text","F1:Aim F2:ESP F3:WH F4:Style | Bots:"..botCount.." | "..Exec.name) end;if Cfg.On and S.tgt.part and S.tgt.vis then local sp,_,on=W2S(S.tgt.part.Position);if sp and on then if IV(d.line) then DS(d.line,"From",c);DS(d.line,"To",sp);DS(d.line,"Color",Cfg.Vis.LineClr);DS(d.line,"Thickness",Cfg.Vis.LineW);pcall(function() d.line.Visible=Cfg.Vis.Line end) end;if IV(d.dot) then DS(d.dot,"Position",sp);DS(d.dot,"Color",Cfg.Vis.DotClr);DS(d.dot,"Radius",Cfg.Vis.DotSz);pcall(function() d.dot.Visible=Cfg.Vis.Dot end) end else DV(d.line,false);DV(d.dot,false) end else DV(d.line,false);DV(d.dot,false) end end
+function HUD.Update() if DEAD or not drawOK then return end;local c=SCC();local d=S.draw;if IV(d.fov) then DS(d.fov,"Position",c);DS(d.fov,"Radius",Cfg.FOV.R);DS(d.fov,"Color",Cfg.FOV.Color);DS(d.fov,"Transparency",Cfg.FOV.Trans);DS(d.fov,"Thickness",Cfg.FOV.Thick);pcall(function() d.fov.Visible=(Cfg.On and Cfg.FOV.On and Cfg.FOV.Show) end) end;if IV(d.st) then local ps={"XENO",Cfg.On and"["..(({normal="AIM",snap="SNAP",flick="FLICK",silent="SILENT"})[Cfg.AimMode]or"?").."]"or"[OFF]"};if Cfg.ESP.On then table.insert(ps,"["..Cfg.ESP.Style.."]") end;if S.tgt.part and Cfg.On then table.insert(ps,string.format("| %s %.0fHP",S.tgt.isBot and"BOT"or S.tgt.name,S.tgt.hp)) end;DS(d.st,"Text",table.concat(ps," "));DS(d.st,"Color",Cfg.On and Color3.fromRGB(100,255,100)or Color3.fromRGB(255,100,100)) end;if not IsMobile and IV(d.inf) then DS(d.inf,"Text","F1:Aim F2:ESP F3:WH F4:Style | "..Exec.name) end;if Cfg.On and S.tgt.part and S.tgt.vis then local sp,_,on=W2S(S.tgt.part.Position);if sp and on then if IV(d.line) then DS(d.line,"From",c);DS(d.line,"To",sp);DS(d.line,"Color",Cfg.Vis.LineClr);DS(d.line,"Thickness",Cfg.Vis.LineW);pcall(function() d.line.Visible=Cfg.Vis.Line end) end;if IV(d.dot) then DS(d.dot,"Position",sp);DS(d.dot,"Color",Cfg.Vis.DotClr);DS(d.dot,"Radius",Cfg.Vis.DotSz);pcall(function() d.dot.Visible=Cfg.Vis.Dot end) end else DV(d.line,false);DV(d.dot,false) end else DV(d.line,false);DV(d.dot,false) end end
 function HUD.Destroy() for k,dr in pairs(S.draw) do Kill(dr);S.draw[k]=nil end;S.draw={} end
 
 local GC={bg=Color3.fromRGB(18,18,28),hdr=Color3.fromRGB(12,12,22),pnl=Color3.fromRGB(25,25,40),acc=Color3.fromRGB(90,130,255),accG=Color3.fromRGB(120,160,255),grn=Color3.fromRGB(80,220,120),red=Color3.fromRGB(255,70,70),org=Color3.fromRGB(255,180,50),txt=Color3.fromRGB(230,230,240),txtD=Color3.fromRGB(140,140,160),brd=Color3.fromRGB(45,45,70),brdA=Color3.fromRGB(90,130,255),tOn=Color3.fromRGB(90,200,130),tOff=Color3.fromRGB(60,60,80),sF=Color3.fromRGB(90,130,255),sB=Color3.fromRGB(40,40,60),ddBg=Color3.fromRGB(20,20,35),tabBg=Color3.fromRGB(18,18,30),tabA=Color3.fromRGB(25,25,45)}
@@ -539,7 +473,7 @@ function G.Create()
     local gui=Instance.new("ScreenGui");gui.Name="X_"..math.random(100000,999999);gui.ResetOnSpawn=false;gui.ZIndexBehavior=Enum.ZIndexBehavior.Sibling;gui.DisplayOrder=999;Protect(gui);gui.Parent=SafeP();S.gui=gui
     local mW,mH=SC(520,math.min(Cam.ViewportSize.X-20,390)),SC(620,math.min(Cam.ViewportSize.Y-80,520))
     local main=Instance.new("Frame",gui);main.Name="MainFrame";main.Size=UDim2.new(0,mW,0,mH);main.Position=UDim2.new(0.5,-mW/2,0.5,-mH/2);main.BackgroundColor3=GC.bg;main.BorderSizePixel=0;main.Visible=false;main.Active=true;main.ClipsDescendants=true;G.Crn(main,12);G.Stk(main,GC.brd,1)
-    local hH=SC(44,38);local hdr=Instance.new("Frame",main);hdr.Size=UDim2.new(1,0,0,hH);hdr.BackgroundColor3=GC.hdr;hdr.BorderSizePixel=0;hdr.ZIndex=5;G.Crn(hdr,12);Instance.new("TextLabel",hdr).Text="XENO v9.5";hdr:GetChildren()[#hdr:GetChildren()].Size=UDim2.new(0,80,0,18);hdr:GetChildren()[#hdr:GetChildren()].Position=UDim2.new(0,14,0,SC(6,4));hdr:GetChildren()[#hdr:GetChildren()].BackgroundTransparency=1;hdr:GetChildren()[#hdr:GetChildren()].TextColor3=GC.acc;hdr:GetChildren()[#hdr:GetChildren()].TextSize=SC(16,14);hdr:GetChildren()[#hdr:GetChildren()].Font=Enum.Font.GothamBlack;hdr:GetChildren()[#hdr:GetChildren()].TextXAlignment=Enum.TextXAlignment.Left;hdr:GetChildren()[#hdr:GetChildren()].ZIndex=6;local xb=Instance.new("TextButton",hdr);xb.Text="X";xb.Size=UDim2.new(0,SC(28,24),0,SC(28,24));xb.Position=UDim2.new(1,-SC(36,30),0.5,-SC(14,12));xb.BackgroundColor3=GC.red;xb.TextColor3=Color3.new(1,1,1);xb.TextSize=SC(12,10);xb.Font=Enum.Font.GothamBold;xb.ZIndex=7;xb.AutoButtonColor=false;G.Crn(xb,6);xb.MouseButton1Click:Connect(function() CloseDD();CloseSub();main.Visible=false end);G.Drag(main,hdr)
+    local hH=SC(44,38);local hdr=Instance.new("Frame",main);hdr.Size=UDim2.new(1,0,0,hH);hdr.BackgroundColor3=GC.hdr;hdr.BorderSizePixel=0;hdr.ZIndex=5;G.Crn(hdr,12);Instance.new("TextLabel",hdr).Text="XENO v9.6";hdr:GetChildren()[#hdr:GetChildren()].Size=UDim2.new(0,80,0,18);hdr:GetChildren()[#hdr:GetChildren()].Position=UDim2.new(0,14,0,SC(6,4));hdr:GetChildren()[#hdr:GetChildren()].BackgroundTransparency=1;hdr:GetChildren()[#hdr:GetChildren()].TextColor3=GC.acc;hdr:GetChildren()[#hdr:GetChildren()].TextSize=SC(16,14);hdr:GetChildren()[#hdr:GetChildren()].Font=Enum.Font.GothamBlack;hdr:GetChildren()[#hdr:GetChildren()].TextXAlignment=Enum.TextXAlignment.Left;hdr:GetChildren()[#hdr:GetChildren()].ZIndex=6;local xb=Instance.new("TextButton",hdr);xb.Text="X";xb.Size=UDim2.new(0,SC(28,24),0,SC(28,24));xb.Position=UDim2.new(1,-SC(36,30),0.5,-SC(14,12));xb.BackgroundColor3=GC.red;xb.TextColor3=Color3.new(1,1,1);xb.TextSize=SC(12,10);xb.Font=Enum.Font.GothamBold;xb.ZIndex=7;xb.AutoButtonColor=false;G.Crn(xb,6);xb.MouseButton1Click:Connect(function() CloseDD();CloseSub();main.Visible=false end);G.Drag(main,hdr)
     local tH=SC(34,30);local tb=Instance.new("Frame",main);tb.Size=UDim2.new(1,0,0,tH);tb.Position=UDim2.new(0,0,0,hH);tb.BackgroundColor3=GC.tabBg;tb.BorderSizePixel=0;tb.ZIndex=4
     local modes=Exec.canSilent and{"normal","snap","silent"}or{"normal","snap","flick"};local styles={"Corner","Full","Glow","Cyber","Gradient"}
     local tabs={{"Aim","+"},{"ESP","*"},{"Misc","="}};local tabBtns,tabFrames={},{};local tw=1/#tabs
@@ -579,6 +513,7 @@ function G.Create()
     G.DD(sc,"Style",styles,Cfg.ESP.Style,y,function(v) Cfg.ESP.Style=v end);y=y+DH
     G.Tog(sc,"Interpolation",Cfg.ESP.Render.Interp,y,function(v) Cfg.ESP.Render.Interp=v end);y=y+TH
     G.Sld(sc,"Interp Speed",1,60,Cfg.ESP.Render.InterpSpeed,y,"%.0f",function(v) Cfg.ESP.Render.InterpSpeed=v end);y=y+SH
+    G.Sld(sc,"ESP FPS Limit",0,60,Cfg.ESP.Render.FPS,y,"%.0f",function(v) Cfg.ESP.Render.FPS=v end);y=y+SH
     G.Tog(sc,"Box",Cfg.ESP.Box.On,y,function(v) Cfg.ESP.Box.On=v end);y=y+TH
     G.Tog(sc,"Name",Cfg.ESP.Name.On,y,function(v) Cfg.ESP.Name.On=v end);y=y+TH
     G.Tog(sc,"Distance",Cfg.ESP.Dist.On,y,function(v) Cfg.ESP.Dist.On=v end);y=y+TH
@@ -603,7 +538,6 @@ function G.Create()
     local function Lbl(t,yy,col) Instance.new("TextLabel",sc).Text=t;sc:GetChildren()[#sc:GetChildren()].Size=UDim2.new(1,-20,0,SC(16,20));sc:GetChildren()[#sc:GetChildren()].Position=UDim2.new(0,10,0,yy);sc:GetChildren()[#sc:GetChildren()].BackgroundTransparency=1;sc:GetChildren()[#sc:GetChildren()].TextColor3=col or GC.txtD;sc:GetChildren()[#sc:GetChildren()].TextSize=SC(11,12);sc:GetChildren()[#sc:GetChildren()].Font=Enum.Font.Gotham;sc:GetChildren()[#sc:GetChildren()].TextXAlignment=Enum.TextXAlignment.Left;sc:GetChildren()[#sc:GetChildren()].TextWrapped=true end
     Lbl("Executor: "..Exec.name,y,GC.txt);y=y+SC(20,24)
     Lbl("Silent: "..(Exec.canSilent and"YES"or"NO"),y,Exec.canSilent and GC.grn or GC.red);y=y+SC(20,24)
-    Lbl("Bots: "..#Bot.Scan().." found",y,GC.org);y=y+SC(20,24)
     Lbl("Players: "..#Players:GetPlayers()-1,y,GC.grn);y=y+SC(20,24)
     if not IsMobile then Lbl("F1-Aim F2-ESP F3-WH F4-Style RShift-Menu",y,GC.txt);y=y+20 end
     y=y+8;G.Btn(sc,"Unload",y,GC.red,function() Notify("X","Bye",2);task.delay(0.3,Cleanup) end);y=y+SC(38,46)
@@ -659,7 +593,7 @@ table.insert(S.conns,Players.PlayerRemoving:Connect(function(p) if DEAD then ret
 SetupChar();task.wait(0.5);Fire.Init();HUD.Create()
 if Exec.canSilent and Cfg.Silent.On then Sil.Install() end
 G.Create();Input();Loop()
-Notify("Xeno v9.5",string.format("%s | %s | Bots:%d",Cfg.AimMode:upper(),IsMobile and"Mobile"or"PC",#Bot.Scan()),5)
+Notify("Xeno v9.6","Loaded | "..Cfg.AimMode:upper().." | "..(IsMobile and"Mobile"or"PC"),5)
 
 end)
 if not ok then pcall(function() game:GetService("StarterGui"):SetCore("SendNotification",{Title="XENO ERROR",Text=tostring(err):sub(1,100),Duration=10}) end);warn("[XENO]",err) end
