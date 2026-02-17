@@ -43,9 +43,9 @@ local function IV(d) if not d then return false end;local o=pcall(function() ret
 
 Notify("XENO","Loading v9.1...",3)
 
--- ═══════════════════════════════════════
--- CONFIG
--- ═══════════════════════════════════════
+
+-- Кфг
+
 local Cfg={
     On=false,AimMode=Exec.canSilent and"silent"or"normal",
     Part="Head",Priority="FOV",Sticky=true,StickyTime=3,Aim360=false,
@@ -107,13 +107,12 @@ local S={
     fire={last=0,method="none"},draw={},espC={},whC={},
     charMap={},charMapTick=0,spinAng=0,conns={},
     gui=nil,mobFrame=nil,subMenu=nil,
-    -- Combat Arena specific
     arenaCache={},arenaTick=0,
 }
 
--- ═══════════════════════════════════════
--- MATH / UTIL
--- ═══════════════════════════════════════
+
+-- Ебучая математика ((
+
 local function W2S(pos) if not Cam then return nil,0,false end;local o,v,on=pcall(Cam.WorldToViewportPoint,Cam,pos);if not o or not v then return nil,0,false end;return on and Vector2.new(v.X,v.Y) or nil,v.Z,on end
 local function W2SR(pos) if not Cam then return nil,0 end;local o,v=pcall(Cam.WorldToViewportPoint,Cam,pos);if not o or not v then return nil,0 end;return Vector2.new(v.X,v.Y),v.Z end
 local function SCC() if not Cam then return Vector2.new() end;return Vector2.new(Cam.ViewportSize.X*0.5,Cam.ViewportSize.Y*0.5) end
@@ -139,38 +138,23 @@ local function CanSee(part,myCh)
     end;return false
 end
 
--- ═══════════════════════════════════════════════════════════
--- RESOLVER v3 — Combat Arena / Gunfight Arena обход
--- ═══════════════════════════════════════════════════════════
--- Эти игры:
--- 1) Используют кастомные модели НЕ привязанные к Player.Character
--- 2) Модели в папках типа "Characters", "Alive", "InRound" и т.д.
--- 3) Иногда привязка через Attribute, StringValue, ObjectValue
--- 4) Иногда модель названа по UserId, не по Name
--- 5) Humanoid может называться по-другому или быть в подмодели
--- ═══════════════════════════════════════════════════════════
+-- Система поиска пидорасов
 
 local Res = {}
-
--- Проверяем является ли модель живым персонажем
 local function IsAliveModel(model)
     if not model or not model:IsA("Model") then return false end
-    -- Ищем Humanoid
     local hum = model:FindFirstChildOfClass("Humanoid")
     if not hum then
-        -- Некоторые игры прячут Humanoid внутрь
         for _, d in ipairs(model:GetDescendants()) do
             if d:IsA("Humanoid") then hum = d; break end
         end
     end
     if not hum or hum.Health <= 0 then return false end
-    -- Ищем корневую часть
     local root = model:FindFirstChild("HumanoidRootPart")
         or model:FindFirstChild("Torso")
         or model:FindFirstChild("UpperTorso")
         or model.PrimaryPart
     if not root then
-        -- Ищем любую BasePart с именем содержащим root/torso
         for _, p in ipairs(model:GetChildren()) do
             if p:IsA("BasePart") then
                 local ln = p.Name:lower()
@@ -183,12 +167,10 @@ local function IsAliveModel(model)
     return root ~= nil, hum, root
 end
 
--- Пытаемся связать модель с игроком
 local function ModelMatchesPlayer(model, tp)
     if not model or not tp then return false end
     local names = {tp.Name, tp.DisplayName, tostring(tp.UserId)}
 
-    -- Прямое совпадение имени
     for _, n in ipairs(names) do
         if model.Name == n then return true end
     end
@@ -205,7 +187,6 @@ local function ModelMatchesPlayer(model, tp)
         end
     end
 
-    -- Проверяем StringValue / ObjectValue внутри модели
     for _, child in ipairs(model:GetChildren()) do
         if child:IsA("StringValue") then
             local ln = child.Name:lower()
@@ -225,7 +206,6 @@ local function ModelMatchesPlayer(model, tp)
         end
     end
 
-    -- Проверяем есть ли Billboard с именем игрока
     for _, d in ipairs(model:GetDescendants()) do
         if d:IsA("BillboardGui") or d:IsA("TextLabel") then
             pcall(function()
@@ -239,7 +219,6 @@ local function ModelMatchesPlayer(model, tp)
     return false
 end
 
--- Глубокий поиск всех живых моделей в workspace
 local function CollectAliveModels()
     local results = {}
     local visited = {}
@@ -259,7 +238,6 @@ local function CollectAliveModels()
                     table.insert(results, {model = child, hum = hum, root = root})
                 end
             end
-            -- Рекурсивно ищем в папках, моделях, и других контейнерах
             if child:IsA("Folder") or child:IsA("Model") or child:IsA("Configuration") or child:IsA("WorldModel") then
                 scan(child, depth + 1)
             end
@@ -272,8 +250,6 @@ end
 
 function Res.Find(tp)
     if not tp then return nil end
-
-    -- 1) Стандартный Character
     local ch = tp.Character
     if ch and ch.Parent then
         local alive = IsAliveModel(ch)
@@ -281,16 +257,12 @@ function Res.Find(tp)
     end
 
     if not Cfg.AC.On or not Cfg.AC.AltDetect then return ch end
-
-    -- 2) Поиск по имени в кэше арены
     if Cfg.AC.DeepScan then
-        -- Обновляем кэш каждые CacheRate секунд
         if tick() - S.arenaTick > Cfg.AC.CacheRate then
             S.arenaCache = CollectAliveModels()
             S.arenaTick = tick()
         end
 
-        -- Ищем модель принадлежащую этому игроку
         for _, entry in ipairs(S.arenaCache) do
             if entry.model ~= ch and entry.model.Parent then
                 if ModelMatchesPlayer(entry.model, tp) then
@@ -298,9 +270,6 @@ function Res.Find(tp)
                 end
             end
         end
-
-        -- Если не нашли по атрибутам, ищем по близости к камере игрока
-        -- (последний резорт — полезно когда имена не совпадают)
     end
 
     return ch
@@ -324,10 +293,8 @@ function Res.Get(tp)
     return tp.Character
 end
 
--- Улучшенная HP функция для арен
 function Res.HP(ch)
     if not ch then return 0, 100 end
-    -- Стандартный Humanoid
     local h = ch:FindFirstChildOfClass("Humanoid")
     if not h then
         for _, d in ipairs(ch:GetDescendants()) do
@@ -335,7 +302,6 @@ function Res.HP(ch)
         end
     end
     if h then return h.Health, h.MaxHealth end
-    -- NumberValue с именем Health/HP
     for _, d in ipairs(ch:GetDescendants()) do
         if (d:IsA("NumberValue") or d:IsA("IntValue")) then
             local ln = d.Name:lower()
@@ -354,7 +320,6 @@ function Res.HP(ch)
     return 100, 100
 end
 
--- Улучшенный поиск корневой части
 function Res.Root(ch)
     if not ch then return nil end
     local r = ch:FindFirstChild("HumanoidRootPart")
@@ -368,16 +333,14 @@ function Res.Root(ch)
             if ln:find("root") or ln:find("torso") or ln:find("hrp") then return p end
         end
     end
-    -- Последний резорт — первая BasePart
     for _, p in ipairs(ch:GetChildren()) do
         if p:IsA("BasePart") then return p end
     end
     return nil
 end
 
--- ═══════════════════════════════════════
--- CHARACTER SETUP
--- ═══════════════════════════════════════
+-- CHARACTER
+
 local function SetupChar()
     local function onC(ch)
         S.me.char=ch;S.me.alive=false;S.tgt.part=nil;S.tgt.plr=nil
@@ -399,9 +362,8 @@ local function SetupChar()
     table.insert(S.conns,Plr.CharacterAdded:Connect(onC))
 end
 
--- ═══════════════════════════════════════
--- TARGETING
--- ═══════════════════════════════════════
+-- Тагретинг
+
 local T={}
 
 function T.GetP(ch)
@@ -455,9 +417,6 @@ function T.Find()
     if bp then S.tgt.vis=true end;return bp,bpl
 end
 
--- ═══════════════════════════════════════
--- AIM / SILENT / FLICK / FIRE / EXPLOITS (compact)
--- ═══════════════════════════════════════
 local A={}
 function A.Pred(p) if not Cfg.Pred.On or not p then return p and p.Position or Vector3.zero end;local cur=p.Position;if S.tgt.lastPos then S.tgt.sVel=S.tgt.sVel+((cur-S.tgt.lastPos)*60-S.tgt.sVel)*Cfg.Pred.VelSmooth end;S.tgt.lastPos=cur;return p.Position+S.tgt.sVel*Cfg.Pred.Factor end
 function A.GetCF(p) if not p or not Cam then return nil end;local t=A.Pred(p);local c=Cam.CFrame.Position;local d=t-c;return d.Magnitude>0.001 and CFrame.lookAt(c,c+d.Unit) or nil end
@@ -506,9 +465,8 @@ function Exp.Spin(dt) if not Cfg.Spin.On or not S.me.root or not S.me.alive then
 function Exp.RSpin() S.spinAng=0 end
 function Exp.Speed(dt) if not Cfg.Speed.On or not S.me.root or not S.me.alive or not S.me.hum then return end;pcall(function() local md=S.me.hum.MoveDirection;if md.Magnitude<0.1 then return end;S.me.root.CFrame=S.me.root.CFrame+md.Unit*S.me.hum.WalkSpeed*(Cfg.Speed.Mult-1)*dt end) end
 
--- ═══════════════════════════════════════
--- ESP
--- ═══════════════════════════════════════
+-- ESР
+
 local B15={{"Head","UpperTorso"},{"UpperTorso","RightUpperArm"},{"RightUpperArm","RightLowerArm"},{"RightLowerArm","RightHand"},{"UpperTorso","LeftUpperArm"},{"LeftUpperArm","LeftLowerArm"},{"LeftLowerArm","LeftHand"},{"UpperTorso","LowerTorso"},{"LowerTorso","RightUpperLeg"},{"RightUpperLeg","RightLowerLeg"},{"RightLowerLeg","RightFoot"},{"LowerTorso","LeftUpperLeg"},{"LeftUpperLeg","LeftLowerLeg"},{"LeftLowerLeg","LeftFoot"}}
 local B6={{"Head","Torso"},{"Torso","Right Arm"},{"Torso","Left Arm"},{"Torso","Right Leg"},{"Torso","Left Leg"}}
 
@@ -522,17 +480,20 @@ function E.New(tp)
     for i=1,13 do o.cyber[i]=ND("Line") end
     for i=1,8 do o.grad[i]=ND("Line") end
     o.bI=ND("Square");DS(o.bI,"Filled",false);o.bO=ND("Square");DS(o.bO,"Filled",false)
-    o.nT=ND("Text");DS(o.nT,"Outline",true);DS(o.nT,"Size",14)
-    o.nSh=ND("Text");DS(o.nSh,"Outline",false);DS(o.nSh,"Size",14)
-    o.dT=ND("Text");DS(o.dT,"Outline",true);DS(o.dT,"Size",12)
-    o.wT=ND("Text");DS(o.wT,"Outline",true);DS(o.wT,"Size",11)
-    o.flT=ND("Text");DS(o.flT,"Outline",true);DS(o.flT,"Size",11)
-    o.hBo=ND("Square");DS(o.hBo,"Filled",false);DS(o.hBo,"Color",Color3.new(0,0,0));DS(o.hBo,"Thickness",1)
-    o.hBg=ND("Square");DS(o.hBg,"Filled",true);o.hF=ND("Square");DS(o.hF,"Filled",true)
-    o.hT=ND("Text");DS(o.hT,"Outline",true);DS(o.hT,"Size",11);DS(o.hT,"Center",true)
-    o.tr=ND("Line");o.trO=ND("Line");o.arr=ND("Triangle");DS(o.arr,"Filled",true)
-    o.hdot=ND("Circle");DS(o.hdot,"Filled",true);DS(o.hdot,"NumSides",16)
-    o.hdotO=ND("Circle");DS(o.hdotO,"Filled",false);DS(o.hdotO,"NumSides",16)
+    o.nT=ND("Text");DS(o.nT,"Outline",true);DS(o.nT,"Size",14);DV(o.nT,false)
+    o.nSh=ND("Text");DS(o.nSh,"Outline",false);DS(o.nSh,"Size",14);DV(o.nSh,false)
+    o.dT=ND("Text");DS(o.dT,"Outline",true);DS(o.dT,"Size",12);DV(o.dT,false)
+    o.wT=ND("Text");DS(o.wT,"Outline",true);DS(o.wT,"Size",11);DV(o.wT,false)
+    o.flT=ND("Text");DS(o.flT,"Outline",true);DS(o.flT,"Size",11);DV(o.flT,false)
+    o.hBo=ND("Square");DS(o.hBo,"Filled",false);DS(o.hBo,"Color",Color3.new(0,0,0));DS(o.hBo,"Thickness",1);DV(o.hBo,false)
+    o.hBg=ND("Square");DS(o.hBg,"Filled",true);DV(o.hBg,false)
+    o.hF=ND("Square");DS(o.hF,"Filled",true);DV(o.hF,false)
+    o.hT=ND("Text");DS(o.hT,"Outline",true);DS(o.hT,"Size",11);DS(o.hT,"Center",true);DV(o.hT,false)
+    o.tr=ND("Line");DV(o.tr,false)
+    o.trO=ND("Line");DV(o.trO,false)
+    o.arr=ND("Triangle");DS(o.arr,"Filled",true);DV(o.arr,false)
+    o.hdot=ND("Circle");DS(o.hdot,"Filled",true);DS(o.hdot,"NumSides",16);DV(o.hdot,false)
+    o.hdotO=ND("Circle");DS(o.hdotO,"Filled",false);DS(o.hdotO,"NumSides",16);DV(o.hdotO,false)
     for i=1,#B15 do o.bones[i]=ND("Line") end
     S.espC[tp]=o
 end
@@ -567,10 +528,8 @@ function E.FmtN(tp,dist) local dn=tp.DisplayName or tp.Name;if Cfg.ESP.Name.Fmt=
 function E.IntBB(o,nb,dt) if not Cfg.ESP.Render.Interp or not o.curBB or not nb then o.curBB=nb;return nb end;local sp=math.clamp(Cfg.ESP.Render.InterpSpeed*dt,0,1);local cb=o.curBB;o.curBB={x=cb.x+(nb.x-cb.x)*sp,y=cb.y+(nb.y-cb.y)*sp,w=cb.w+(nb.w-cb.w)*sp,h=cb.h+(nb.h-cb.h)*sp,top=cb.top:Lerp(nb.top,sp),bot=cb.bot:Lerp(nb.bot,sp),rp=cb.rp:Lerp(nb.rp,sp)};return o.curBB end
 function E.ShouldR(o) local R=Cfg.ESP.Render;if R.FPS<=0 then return true end;if tick()-o.lastUpdate<1/R.FPS then return false end;o.lastUpdate=tick();return true end
 
--- Hide all box drawings
 local function HideBox(o) for i=1,8 do DV(o.cL[i],false);DV(o.cO[i],false) end;for i=1,12 do DV(o.glow[i],false) end;for i=1,13 do DV(o.cyber[i],false) end;for i=1,8 do DV(o.grad[i],false) end;DV(o.bI,false);DV(o.bO,false) end
 
--- STYLE: Corner
 local function DrawCorner(o,bx,by,bw,bh,clr,oClr)
     DV(o.bI,false);DV(o.bO,false);for i=1,12 do DV(o.glow[i],false) end;for i=1,13 do DV(o.cyber[i],false) end;for i=1,8 do DV(o.grad[i],false) end
     local cl=math.max(bw,bh)*Cfg.ESP.Box.CL
@@ -578,14 +537,12 @@ local function DrawCorner(o,bx,by,bw,bh,clr,oClr)
     for i=1,8 do if IV(o.cO[i])and Cfg.ESP.Box.Outline then DS(o.cO[i],"From",pts[i][1]);DS(o.cO[i],"To",pts[i][2]);DS(o.cO[i],"Color",oClr);DS(o.cO[i],"Thickness",Cfg.ESP.Box.W+Cfg.ESP.Box.OW);DV(o.cO[i],true) else DV(o.cO[i],false) end;if IV(o.cL[i]) then DS(o.cL[i],"From",pts[i][1]);DS(o.cL[i],"To",pts[i][2]);DS(o.cL[i],"Color",clr);DS(o.cL[i],"Thickness",Cfg.ESP.Box.W);DV(o.cL[i],true) end end
 end
 
--- STYLE: Full
 local function DrawFull(o,bx,by,bw,bh,clr,oClr)
     for i=1,8 do DV(o.cL[i],false);DV(o.cO[i],false) end;for i=1,12 do DV(o.glow[i],false) end;for i=1,13 do DV(o.cyber[i],false) end;for i=1,8 do DV(o.grad[i],false) end
     if IV(o.bO)and Cfg.ESP.Box.Outline then DS(o.bO,"Size",Vector2.new(bw+4,bh+4));DS(o.bO,"Position",Vector2.new(bx-2,by-2));DS(o.bO,"Color",oClr);DS(o.bO,"Thickness",Cfg.ESP.Box.W);DV(o.bO,true) else DV(o.bO,false) end
     if IV(o.bI) then DS(o.bI,"Size",Vector2.new(bw,bh));DS(o.bI,"Position",Vector2.new(bx,by));DS(o.bI,"Color",clr);DS(o.bI,"Thickness",Cfg.ESP.Box.W);DV(o.bI,true) end
 end
 
--- STYLE: Glow
 local function DrawGlow(o,bx,by,bw,bh,clr)
     for i=1,8 do DV(o.cL[i],false);DV(o.cO[i],false) end;DV(o.bI,false);DV(o.bO,false);for i=1,13 do DV(o.cyber[i],false) end;for i=1,8 do DV(o.grad[i],false) end
     local G=Cfg.ESP.Glow;local sides={{Vector2.new(bx,by),Vector2.new(bx+bw,by)},{Vector2.new(bx+bw,by),Vector2.new(bx+bw,by+bh)},{Vector2.new(bx,by+bh),Vector2.new(bx+bw,by+bh)},{Vector2.new(bx,by),Vector2.new(bx,by+bh)}};local idx=1
@@ -593,7 +550,6 @@ local function DrawGlow(o,bx,by,bw,bh,clr)
     for i=idx,12 do DV(o.glow[i],false) end
 end
 
--- STYLE: Cyber
 local function DrawCyber(o,bx,by,bw,bh,clr,accent)
     for i=1,8 do DV(o.cL[i],false);DV(o.cO[i],false) end;DV(o.bI,false);DV(o.bO,false);for i=1,12 do DV(o.glow[i],false) end;for i=1,8 do DV(o.grad[i],false) end
     local CB=Cfg.ESP.Cyber;local cl=math.max(bw,bh)*0.3
@@ -603,23 +559,19 @@ local function DrawCyber(o,bx,by,bw,bh,clr,accent)
     if CB.ScanLine then o.scanY=(o.scanY or 0)+CB.ScanSpeed;if o.scanY>bh then o.scanY=0 end;if IV(o.cyber[13]) then DS(o.cyber[13],"From",Vector2.new(bx,by+o.scanY));DS(o.cyber[13],"To",Vector2.new(bx+bw,by+o.scanY));DS(o.cyber[13],"Color",accent);DS(o.cyber[13],"Thickness",1);DS(o.cyber[13],"Transparency",0.5);DV(o.cyber[13],true) end else DV(o.cyber[13],false) end
 end
 
--- STYLE: Gradient
 local function DrawGradient(o,bx,by,bw,bh,topC,botC)
     for i=1,8 do DV(o.cO[i],false) end;DV(o.bI,false);DV(o.bO,false);for i=1,12 do DV(o.glow[i],false) end;for i=1,13 do DV(o.cyber[i],false) end
     local steps=math.min(Cfg.ESP.Grad.Steps,4);local segH=bh/steps
-    -- Left + Right sides as gradient segments
     for i=1,steps do local t=(i-1)/(steps-1);local clr=Lerp3(topC,botC,t);local y1=by+segH*(i-1);local y2=by+segH*i
         local li=(i-1)*2+1;local ri=li+1
         if li<=8 and IV(o.grad[li]) then DS(o.grad[li],"From",Vector2.new(bx,y1));DS(o.grad[li],"To",Vector2.new(bx,y2));DS(o.grad[li],"Color",clr);DS(o.grad[li],"Thickness",Cfg.ESP.Box.W);DV(o.grad[li],true) end
         if ri<=8 and IV(o.grad[ri]) then DS(o.grad[ri],"From",Vector2.new(bx+bw,y1));DS(o.grad[ri],"To",Vector2.new(bx+bw,y2));DS(o.grad[ri],"Color",clr);DS(o.grad[ri],"Thickness",Cfg.ESP.Box.W);DV(o.grad[ri],true) end
     end
-    -- Top/Bottom lines
     if IV(o.cL[1]) then DS(o.cL[1],"From",Vector2.new(bx,by));DS(o.cL[1],"To",Vector2.new(bx+bw,by));DS(o.cL[1],"Color",topC);DS(o.cL[1],"Thickness",Cfg.ESP.Box.W);DV(o.cL[1],true) end
     if IV(o.cL[2]) then DS(o.cL[2],"From",Vector2.new(bx,by+bh));DS(o.cL[2],"To",Vector2.new(bx+bw,by+bh));DS(o.cL[2],"Color",botC);DS(o.cL[2],"Thickness",Cfg.ESP.Box.W);DV(o.cL[2],true) end
     for i=3,8 do DV(o.cL[i],false) end
 end
 
--- ═══ MAIN RENDER — FIX: text positioning ═══
 function E.Render(tp,dt)
     local o=S.espC[tp];if not o or not o.valid then return end;dt=dt or 0.016
     local ch=Res.Get(tp);if not ch or not ch.Parent then E.HideAll(o);return end
@@ -631,11 +583,43 @@ function E.Render(tp,dt)
     local now=tick();if now-o.lastVisTick>0.15 then o.isVis=CanSee(rootP,S.me.char);o.lastVisTick=now end
     E.ShouldR(o)
     local rawBB=E.BB(ch)
+    
     if not rawBB then
         E.HideAll(o)
-        if Cfg.ESP.OFS.On and S.me.root and IV(o.arr) then local raw=W2SR(rootP.Position);if raw then local sc=SCC();local d2=raw-sc;if d2.Magnitude>5 then d2=d2.Unit;local ap=sc+d2*Cfg.ESP.OFS.Rad;local perp=Vector2.new(-d2.Y,d2.X);local sz=Cfg.ESP.OFS.Sz;DS(o.arr,"PointA",ap+d2*sz);DS(o.arr,"PointB",ap-d2*sz*0.5+perp*sz*0.4);DS(o.arr,"PointC",ap-d2*sz*0.5-perp*sz*0.4);DS(o.arr,"Color",Cfg.ESP.Colors.OFSClr);DV(o.arr,true) else DV(o.arr,false) end else DV(o.arr,false) end end;return
-    end;DV(o.arr,false)
-    local bb=E.IntBB(o,rawBB,dt);local bx,by,bw,bh=bb.x,bb.y,bb.w,bb.h
+                
+        if Cfg.ESP.OFS.On and S.me.root and IV(o.arr) then
+            local raw=W2SR(rootP.Position)
+            if raw then
+                local sc2=SCC()
+                local d2=raw-sc2
+                if d2.Magnitude>5 then
+                    d2=d2.Unit
+                    local ap=sc2+d2*Cfg.ESP.OFS.Rad
+                    local perp=Vector2.new(-d2.Y,d2.X)
+                    local sz=Cfg.ESP.OFS.Sz
+                    DS(o.arr,"PointA",ap+d2*sz)
+                    DS(o.arr,"PointB",ap-d2*sz*0.5+perp*sz*0.4)
+                    DS(o.arr,"PointC",ap-d2*sz*0.5-perp*sz*0.4)
+                    DS(o.arr,"Color",Cfg.ESP.Colors.OFSClr)
+                    DV(o.arr,true)
+                else DV(o.arr,false) end
+            else DV(o.arr,false) end
+        end
+        return
+    end
+    DV(o.arr,false)
+    
+    local bb=E.IntBB(o,rawBB,dt)
+    if not bb or bb.w < 2 or bb.h < 2 then E.HideAll(o);return end
+    
+    local bx,by,bw,bh=bb.x,bb.y,bb.w,bb.h
+    
+    local vpX = Cam and Cam.ViewportSize.X or 1920
+    local vpY = Cam and Cam.ViewportSize.Y or 1080
+    if bx < -500 or bx > vpX + 500 or by < -500 or by > vpY + 500 then
+        E.HideAll(o);return
+    end
+    
     local same=TeamEq(Plr,tp);local CC2=Cfg.ESP.Colors
     local boxClr=same and CC2.TBox or CC2.EBox
     local boxBot=same and CC2.TBoxBot or CC2.EBoxBot
@@ -647,7 +631,6 @@ function E.Render(tp,dt)
     local skelClr=same and CC2.TSkel or CC2.ESkel
     if Cfg.ESP.Box.VisCheck then boxClr=o.isVis and Cfg.ESP.Box.VisClr or Cfg.ESP.Box.InvisClr end
 
-    -- BOX STYLE
     if Cfg.ESP.Box.On then
         local st=Cfg.ESP.Style
         if st=="Corner" then DrawCorner(o,bx,by,bw,bh,boxClr,CC2.Outline)
@@ -658,66 +641,84 @@ function E.Render(tp,dt)
         else DrawCorner(o,bx,by,bw,bh,boxClr,CC2.Outline) end
     else HideBox(o) end
 
-    -- ═══ FIX: Text positioning relative to bounding box ═══
-    local topTY=by
-    local botTY=by+bh+2
-    local rightTY=by
+    local topTY = by
+    local botTY = by + bh + 2
+    local rightTY = by
 
-    -- NAME — always relative to box
+    -- NAME
     if Cfg.ESP.Name.On and IV(o.nT) then
-        local txt=E.FmtN(tp,dist)
-        DS(o.nT,"Text",txt);DS(o.nT,"Color",nameClr);DS(o.nT,"Size",Cfg.ESP.Name.Sz);DS(o.nT,"Outline",Cfg.ESP.Name.OL)
+        local txt = E.FmtN(tp, dist)
+        DS(o.nT, "Text", txt)
+        DS(o.nT, "Color", nameClr)
+        DS(o.nT, "Size", Cfg.ESP.Name.Sz)
+        DS(o.nT, "Outline", Cfg.ESP.Name.OL)
         local nPos
-        if Cfg.ESP.Name.Pos=="Top" then
-            topTY=topTY-Cfg.ESP.Name.Sz-2
-            DS(o.nT,"Center",true)
-            nPos=Vector2.new(bx+bw/2,topTY)
-        elseif Cfg.ESP.Name.Pos=="Bottom" then
-            DS(o.nT,"Center",true)
-            nPos=Vector2.new(bx+bw/2,botTY)
-            botTY=botTY+Cfg.ESP.Name.Sz+2
-        else -- Right
-            DS(o.nT,"Center",false)
-            nPos=Vector2.new(bx+bw+4,rightTY)
-            rightTY=rightTY+Cfg.ESP.Name.Sz+2
+        if Cfg.ESP.Name.Pos == "Top" then
+            topTY = topTY - Cfg.ESP.Name.Sz - 2
+            DS(o.nT, "Center", true)
+            nPos = Vector2.new(bx + bw / 2, topTY)
+        elseif Cfg.ESP.Name.Pos == "Bottom" then
+            DS(o.nT, "Center", true)
+            nPos = Vector2.new(bx + bw / 2, botTY)
+            botTY = botTY + Cfg.ESP.Name.Sz + 2
+        else
+            DS(o.nT, "Center", false)
+            nPos = Vector2.new(bx + bw + 4, rightTY)
+            rightTY = rightTY + Cfg.ESP.Name.Sz + 2
         end
-        DS(o.nT,"Position",nPos);DV(o.nT,true)
-        -- Shadow
+        DS(o.nT, "Position", nPos)
+        DV(o.nT, true)
         if Cfg.ESP.Name.Shadow and IV(o.nSh) then
-            DS(o.nSh,"Text",txt);DS(o.nSh,"Color",CC2.NameShadow);DS(o.nSh,"Size",Cfg.ESP.Name.Sz);DS(o.nSh,"Outline",false)
-            DS(o.nSh,"Center",Cfg.ESP.Name.Pos=="Top" or Cfg.ESP.Name.Pos=="Bottom")
-            DS(o.nSh,"Position",nPos+Vector2.new(1,1));DV(o.nSh,true)
-        else DV(o.nSh,false) end
-    else DV(o.nT,false);DV(o.nSh,false) end
+            DS(o.nSh, "Text", txt)
+            DS(o.nSh, "Color", CC2.NameShadow)
+            DS(o.nSh, "Size", Cfg.ESP.Name.Sz)
+            DS(o.nSh, "Outline", false)
+            DS(o.nSh, "Center", Cfg.ESP.Name.Pos ~= "Right")
+            DS(o.nSh, "Position", nPos + Vector2.new(1, 1))
+            DV(o.nSh, true)
+        else DV(o.nSh, false) end
+    else DV(o.nT, false); DV(o.nSh, false) end
 
-    -- DISTANCE
     if Cfg.ESP.Dist.On and IV(o.dT) then
-        DS(o.dT,"Text",string.format("%.0fm",dist));DS(o.dT,"Color",CC2.DistClr);DS(o.dT,"Size",Cfg.ESP.Dist.Sz);DS(o.dT,"Outline",true)
-        DS(o.dT,"Center",true);DS(o.dT,"Position",Vector2.new(bx+bw/2,botTY))
-        botTY=botTY+Cfg.ESP.Dist.Sz+2;DV(o.dT,true)
-    else DV(o.dT,false) end
+        DS(o.dT, "Text", string.format("%.0fm", dist))
+        DS(o.dT, "Color", CC2.DistClr)
+        DS(o.dT, "Size", Cfg.ESP.Dist.Sz)
+        DS(o.dT, "Outline", true)
+        DS(o.dT, "Center", true)
+        DS(o.dT, "Position", Vector2.new(bx + bw / 2, botTY))
+        botTY = botTY + Cfg.ESP.Dist.Sz + 2
+        DV(o.dT, true)
+    else DV(o.dT, false) end
 
-    -- WEAPON
     if Cfg.ESP.Weapon.On and IV(o.wT) then
-        local tool=GetTool(ch);DS(o.wT,"Text",tool and tool.Name or"None");DS(o.wT,"Color",CC2.WeaponClr);DS(o.wT,"Size",Cfg.ESP.Weapon.Sz);DS(o.wT,"Outline",true)
-        DS(o.wT,"Center",true);DS(o.wT,"Position",Vector2.new(bx+bw/2,botTY))
-        botTY=botTY+Cfg.ESP.Weapon.Sz+2;DV(o.wT,true)
-    else DV(o.wT,false) end
+        local tool = GetTool(ch)
+        DS(o.wT, "Text", tool and tool.Name or "None")
+        DS(o.wT, "Color", CC2.WeaponClr)
+        DS(o.wT, "Size", Cfg.ESP.Weapon.Sz)
+        DS(o.wT, "Outline", true)
+        DS(o.wT, "Center", true)
+        DS(o.wT, "Position", Vector2.new(bx + bw / 2, botTY))
+        botTY = botTY + Cfg.ESP.Weapon.Sz + 2
+        DV(o.wT, true)
+    else DV(o.wT, false) end
 
-    -- FLAGS
     if Cfg.ESP.Flags.On and IV(o.flT) then
-        local ps={};if Cfg.ESP.Flags.ShowTool then local t=GetTool(ch);if t then table.insert(ps,t.Name) end end
-        if Cfg.ESP.Flags.ShowDist then table.insert(ps,string.format("%.0fm",dist)) end
-        if Cfg.ESP.Flags.ShowVis then table.insert(ps,o.isVis and"VIS"or"INVIS") end
-        local str=table.concat(ps," | ")
-        if #str>0 then
-            DS(o.flT,"Text",str);DS(o.flT,"Color",CC2.FlagsClr);DS(o.flT,"Size",Cfg.ESP.Flags.Sz)
-            DS(o.flT,"Center",false);DS(o.flT,"Position",Vector2.new(bx+bw+4,rightTY))
-            rightTY=rightTY+Cfg.ESP.Flags.Sz+2;DV(o.flT,true)
-        else DV(o.flT,false) end
-    else DV(o.flT,false) end
+        local ps = {}
+        if Cfg.ESP.Flags.ShowTool then local t = GetTool(ch); if t then table.insert(ps, t.Name) end end
+        if Cfg.ESP.Flags.ShowDist then table.insert(ps, string.format("%.0fm", dist)) end
+        if Cfg.ESP.Flags.ShowVis then table.insert(ps, o.isVis and "VIS" or "INVIS") end
+        local str = table.concat(ps, " | ")
+        if #str > 0 then
+            DS(o.flT, "Text", str)
+            DS(o.flT, "Color", CC2.FlagsClr)
+            DS(o.flT, "Size", Cfg.ESP.Flags.Sz)
+            DS(o.flT, "Center", false)
+            DS(o.flT, "Position", Vector2.new(bx + bw + 4, rightTY))
+            rightTY = rightTY + Cfg.ESP.Flags.Sz + 2
+            DV(o.flT, true)
+        else DV(o.flT, false) end
+    else DV(o.flT, false) end
 
-    -- HP BAR
     if Cfg.ESP.HP.On then
         local pct=math.clamp(hp/math.max(mhp,1),0,1)
         if Cfg.ESP.HP.Smooth then if not o.smoothHP then o.smoothHP=pct end;o.smoothHP=o.smoothHP+(pct-o.smoothHP)*math.clamp(Cfg.ESP.HP.SmoothSpd*dt,0,1);pct=o.smoothHP end
@@ -732,28 +733,57 @@ function E.Render(tp,dt)
         if IV(o.hT) then if Cfg.ESP.HP.Txt and hp<mhp then DS(o.hT,"Text",string.format("%.0f",hp));DS(o.hT,"Color",hc);DS(o.hT,"Center",true);if hP=="Left"or hP=="Right" then DS(o.hT,"Position",Vector2.new(bgX+bgW/2,fY-14)) else DS(o.hT,"Position",Vector2.new(fX+fW+3,fY-2));DS(o.hT,"Center",false) end;DV(o.hT,true) else DV(o.hT,false) end end
     else DV(o.hBg,false);DV(o.hBo,false);DV(o.hF,false);DV(o.hT,false) end
 
-    -- TRACER
     if Cfg.ESP.Tracer.On and IV(o.tr) then
         local from;local orig=Cfg.ESP.Tracer.Origin;if orig=="Center" then from=SCC() elseif orig=="Top" then from=Vector2.new(Cam.ViewportSize.X/2,0) else from=Vector2.new(Cam.ViewportSize.X/2,Cam.ViewportSize.Y) end
         if Cfg.ESP.Tracer.Outline and IV(o.trO) then DS(o.trO,"From",from);DS(o.trO,"To",bb.bot);DS(o.trO,"Color",CC2.Outline);DS(o.trO,"Thickness",Cfg.ESP.Tracer.W+Cfg.ESP.Tracer.OW*2);DV(o.trO,true) else DV(o.trO,false) end
         DS(o.tr,"From",from);DS(o.tr,"To",bb.bot);DS(o.tr,"Color",tracerClr);DS(o.tr,"Thickness",Cfg.ESP.Tracer.W);DV(o.tr,true)
     else DV(o.tr,false);DV(o.trO,false) end
 
-    -- HEAD DOT
-    if Cfg.ESP.HeadDot.On then local head=ch:FindFirstChild("Head");if head and IV(o.hdot) then local sp,_,on=W2S(head.Position);if sp and on then DS(o.hdot,"Position",sp);DS(o.hdot,"Radius",Cfg.ESP.HeadDot.Rad);DS(o.hdot,"Color",CC2.HeadDotClr);DS(o.hdot,"Filled",Cfg.ESP.HeadDot.Filled);DV(o.hdot,true);if Cfg.ESP.HeadDot.Outline and IV(o.hdotO) then DS(o.hdotO,"Position",sp);DS(o.hdotO,"Radius",Cfg.ESP.HeadDot.Rad+Cfg.ESP.HeadDot.OW);DS(o.hdotO,"Color",CC2.Outline);DS(o.hdotO,"Thickness",Cfg.ESP.HeadDot.OW);DV(o.hdotO,true) else DV(o.hdotO,false) end else DV(o.hdot,false);DV(o.hdotO,false) end else DV(o.hdot,false);DV(o.hdotO,false) end else DV(o.hdot,false);DV(o.hdotO,false) end
-
-    -- SKELETON
-    if Cfg.ESP.Skel.On then local sk=B15;if ch:FindFirstChild("Torso") and not ch:FindFirstChild("UpperTorso") then sk=B6 end;local sClr=Cfg.ESP.Skel.VisCheck and(o.isVis and Cfg.ESP.Box.VisClr or Cfg.ESP.Box.InvisClr) or skelClr;for i,c in ipairs(sk) do local bone=o.bones[i];if not bone or not IV(bone) then continue end;local p1,p2=ch:FindFirstChild(c[1]),ch:FindFirstChild(c[2]);if p1 and p2 then local s1,_,o1=W2S(p1.Position);local s2,_,o2=W2S(p2.Position);if s1 and s2 and o1 and o2 then DS(bone,"From",s1);DS(bone,"To",s2);DS(bone,"Color",sClr);DS(bone,"Thickness",Cfg.ESP.Skel.W);DV(bone,true) else DV(bone,false) end else DV(bone,false) end end;for i=#sk+1,#o.bones do DV(o.bones[i],false) end else for _,b in ipairs(o.bones) do DV(b,false) end end
+    if Cfg.ESP.HeadDot.On then
+        local head=ch:FindFirstChild("Head")
+        if head and IV(o.hdot) then
+            local sp,_,on=W2S(head.Position)
+            if sp and on then
+                DS(o.hdot,"Position",sp);DS(o.hdot,"Radius",Cfg.ESP.HeadDot.Rad);DS(o.hdot,"Color",CC2.HeadDotClr);DS(o.hdot,"Filled",Cfg.ESP.HeadDot.Filled);DV(o.hdot,true)
+                if Cfg.ESP.HeadDot.Outline and IV(o.hdotO) then DS(o.hdotO,"Position",sp);DS(o.hdotO,"Radius",Cfg.ESP.HeadDot.Rad+Cfg.ESP.HeadDot.OW);DS(o.hdotO,"Color",CC2.Outline);DS(o.hdotO,"Thickness",Cfg.ESP.HeadDot.OW);DV(o.hdotO,true) else DV(o.hdotO,false) end
+            else DV(o.hdot,false);DV(o.hdotO,false) end
+        else DV(o.hdot,false);DV(o.hdotO,false) end
+    else DV(o.hdot,false);DV(o.hdotO,false) end
+            
+    if Cfg.ESP.Skel.On then
+        local sk=B15;if ch:FindFirstChild("Torso") and not ch:FindFirstChild("UpperTorso") then sk=B6 end
+        local sClr=Cfg.ESP.Skel.VisCheck and(o.isVis and Cfg.ESP.Box.VisClr or Cfg.ESP.Box.InvisClr) or skelClr
+        for i,c in ipairs(sk) do
+            local bone=o.bones[i];if not bone or not IV(bone) then continue end
+            local p1,p2=ch:FindFirstChild(c[1]),ch:FindFirstChild(c[2])
+            if p1 and p2 then
+                local s1,_,o1=W2S(p1.Position);local s2,_,o2=W2S(p2.Position)
+                if s1 and s2 and o1 and o2 then DS(bone,"From",s1);DS(bone,"To",s2);DS(bone,"Color",sClr);DS(bone,"Thickness",Cfg.ESP.Skel.W);DV(bone,true) else DV(bone,false) end
+            else DV(bone,false) end
+        end
+        for i=#sk+1,#o.bones do DV(o.bones[i],false) end
+    else for _,b in ipairs(o.bones) do DV(b,false) end end
 end
 
 function E.UpdateAll(dt)
-    for _,tp in ipairs(Players:GetPlayers()) do if tp~=Plr then if not S.espC[tp] then E.New(tp) end;pcall(E.Render,tp,dt) end end
-    local rem={};for p in pairs(S.espC) do if not p or not p.Parent then table.insert(rem,p) end end;for _,p in ipairs(rem) do E.Del(p) end
+    for _,tp in ipairs(Players:GetPlayers()) do
+        if tp ~= Plr then
+            if not S.espC[tp] then E.New(tp) end
+            local ok2, err2 = pcall(E.Render, tp, dt)
+            if not ok2 and S.espC[tp] then
+                E.HideAll(S.espC[tp])
+            end
+        end
+    end
+
+    -- Чистим удалённых игроков, надеюсь поможет
+    local rem = {}
+    for p in pairs(S.espC) do
+        if not p or not p.Parent or p == Plr then table.insert(rem, p) end
+    end
+    for _,p in ipairs(rem) do E.Del(p) end
 end
 
--- ═══════════════════════════════════════
--- WALLHACK — improved for Arena games
--- ═══════════════════════════════════════
 local WH={}
 function WH.Make(tp)
     if S.whC[tp] then return end;local ch=Res.Get(tp);if not ch or not ch.Parent then return end
@@ -771,9 +801,8 @@ function WH.UpdateAll()
     local rem={};for p in pairs(S.whC) do if not p or not p.Parent then table.insert(rem,p) end end;for _,p in ipairs(rem) do WH.Kill(p) end
 end
 
--- ═══════════════════════════════════════
--- HUD (compact)
--- ═══════════════════════════════════════
+-- Худ
+        
 local HUD={}
 function HUD.Create() HUD.Destroy();if not drawOK then return end;local d=S.draw;d.fov=ND("Circle");DS(d.fov,"Filled",false);DS(d.fov,"NumSides",64);d.line=ND("Line");d.dot=ND("Circle");DS(d.dot,"Filled",true);DS(d.dot,"NumSides",16);d.st=ND("Text");DS(d.st,"Visible",true);DS(d.st,"Center",false);DS(d.st,"Outline",true);DS(d.st,"Size",SC(14,12));DS(d.st,"Position",Vector2.new(10,SC(10,40)));d.inf=ND("Text");DS(d.inf,"Visible",not IsMobile);DS(d.inf,"Center",false);DS(d.inf,"Outline",true);DS(d.inf,"Size",12);DS(d.inf,"Position",Vector2.new(10,SC(28,56)));DS(d.inf,"Color",Color3.fromRGB(180,180,180)) end
 function HUD.Update() if not drawOK then return end;local c=SCC();local d=S.draw;if IV(d.fov) then DS(d.fov,"Position",c);DS(d.fov,"Radius",Cfg.FOV.R);DS(d.fov,"Color",Cfg.FOV.Color);DS(d.fov,"Transparency",Cfg.FOV.Trans);DS(d.fov,"Thickness",Cfg.FOV.Thick);DV(d.fov,Cfg.On and Cfg.FOV.On and Cfg.FOV.Show) end
@@ -783,9 +812,8 @@ function HUD.Update() if not drawOK then return end;local c=SCC();local d=S.draw
 end
 function HUD.Destroy() for _,dr in pairs(S.draw) do Kill(dr) end;S.draw={} end
 
--- ═══════════════════════════════════════
--- GUI (simplified for reliability)
--- ═══════════════════════════════════════
+-- GUI
+
 local GC={bg=Color3.fromRGB(18,18,28),hdr=Color3.fromRGB(12,12,22),pnl=Color3.fromRGB(25,25,40),acc=Color3.fromRGB(90,130,255),accG=Color3.fromRGB(120,160,255),grn=Color3.fromRGB(80,220,120),red=Color3.fromRGB(255,70,70),org=Color3.fromRGB(255,180,50),txt=Color3.fromRGB(230,230,240),txtD=Color3.fromRGB(140,140,160),brd=Color3.fromRGB(45,45,70),brdA=Color3.fromRGB(90,130,255),tOn=Color3.fromRGB(90,200,130),tOff=Color3.fromRGB(60,60,80),sF=Color3.fromRGB(90,130,255),sB=Color3.fromRGB(40,40,60),ddBg=Color3.fromRGB(20,20,35),tabBg=Color3.fromRGB(18,18,30),tabA=Color3.fromRGB(25,25,45)}
 local DDL,DDB=nil,nil
 local function CloseDD() if DDL then pcall(function() DDL:Destroy() end);DDL=nil end;if DDB then pcall(function() local s=DDB:FindFirstChildOfClass("UIStroke");if s then s.Color=GC.brd end end);DDB=nil end end
@@ -801,7 +829,6 @@ function G.Sld(p,n,mn,mx,d,y,fmt,cb) local h=SC(44,52);local f=Instance.new("Fra
 function G.DD(p,n,opts,d,y,cb) local h=SC(32,40);local ct=Instance.new("Frame",p);ct.Size=UDim2.new(1,-16,0,h);ct.Position=UDim2.new(0,8,0,y);ct.BackgroundColor3=GC.pnl;ct.BorderSizePixel=0;G.Crn(ct,6);Instance.new("TextLabel",ct).Text=n;ct:GetChildren()[#ct:GetChildren()].Size=UDim2.new(0.35,-10,1,0);ct:GetChildren()[#ct:GetChildren()].Position=UDim2.new(0,10,0,0);ct:GetChildren()[#ct:GetChildren()].BackgroundTransparency=1;ct:GetChildren()[#ct:GetChildren()].TextColor3=GC.txt;ct:GetChildren()[#ct:GetChildren()].TextSize=SC(12,13);ct:GetChildren()[#ct:GetChildren()].Font=Enum.Font.Gotham;ct:GetChildren()[#ct:GetChildren()].TextXAlignment=Enum.TextXAlignment.Left;ct:GetChildren()[#ct:GetChildren()].TextWrapped=true;local db=Instance.new("TextButton",ct);db.Text=(d or opts[1]).." v";db.Size=UDim2.new(0.6,0,0,SC(26,32));db.Position=UDim2.new(0.38,0,0.5,-SC(13,16));db.BackgroundColor3=GC.ddBg;db.TextColor3=GC.txt;db.TextSize=SC(11,12);db.Font=Enum.Font.Gotham;db.AutoButtonColor=false;G.Crn(db,5);local bs=G.Stk(db,GC.brd,1);local sel=d or opts[1];db.MouseButton1Click:Connect(function() if DDB==db then CloseDD();return end;CloseDD();bs.Color=GC.brdA;DDB=db;local mf;local cur=p;for _=1,10 do if not cur then break end;if cur.Name=="MainFrame" then mf=cur;break end;cur=cur.Parent end;if not mf then return end;task.defer(function() if DDB~=db then return end;local bp2,bsz=db.AbsolutePosition,db.AbsoluteSize;local mp,ms=mf.AbsolutePosition,mf.AbsoluteSize;local rx,ry=bp2.X-mp.X,bp2.Y-mp.Y+bsz.Y+4;local ih=SC(30,38);local lh=#opts*ih+6;local lw=math.max(bsz.X,SC(130,160));if ry+lh>ms.Y-10 then ry=bp2.Y-mp.Y-lh-4 end;rx=math.clamp(rx,5,ms.X-lw-5);ry=math.clamp(ry,5,ms.Y-lh-5);local grp=Instance.new("Folder",mf);Instance.new("TextButton",grp).Text="";grp:GetChildren()[1].Size=UDim2.new(1,0,1,0);grp:GetChildren()[1].BackgroundTransparency=1;grp:GetChildren()[1].ZIndex=90;grp:GetChildren()[1].AutoButtonColor=false;grp:GetChildren()[1].MouseButton1Click:Connect(CloseDD);local dl=Instance.new("Frame",grp);dl.Size=UDim2.new(0,lw,0,lh);dl.Position=UDim2.new(0,rx,0,ry);dl.BackgroundColor3=Color3.fromRGB(18,18,30);dl.BorderSizePixel=0;dl.ZIndex=100;G.Crn(dl,8);G.Stk(dl,GC.brdA,1);for i,opt in ipairs(opts) do local ob=Instance.new("TextButton",dl);ob.Text=(opt==sel and"> "or"  ")..opt;ob.Size=UDim2.new(1,-8,0,ih-2);ob.Position=UDim2.new(0,4,0,(i-1)*ih+3);ob.BackgroundColor3=opt==sel and Color3.fromRGB(40,50,80) or Color3.fromRGB(22,22,38);ob.TextColor3=opt==sel and GC.acc or GC.txt;ob.TextSize=SC(12,13);ob.Font=Enum.Font.Gotham;ob.TextXAlignment=Enum.TextXAlignment.Left;ob.AutoButtonColor=false;ob.ZIndex=101;G.Crn(ob,5);ob.MouseButton1Click:Connect(function() sel=opt;db.Text=opt.." v";CloseDD();if cb then cb(opt) end end) end;DDL=grp end) end) end
 function G.Btn(p,t,y,col,cb) local b=Instance.new("TextButton",p);b.Text=t;b.Size=UDim2.new(1,-16,0,SC(30,38));b.Position=UDim2.new(0,8,0,y);b.BackgroundColor3=col or GC.acc;b.TextColor3=Color3.new(1,1,1);b.TextSize=SC(12,14);b.Font=Enum.Font.GothamBold;b.AutoButtonColor=false;G.Crn(b,6);b.MouseButton1Click:Connect(function() if cb then cb() end end) end
 
--- Sub-menu builder for gear button
 function G.Sub(mf,title,builder)
     CloseSub();CloseDD()
     local ov=Instance.new("Frame",mf);ov.Size=UDim2.new(1,0,1,0);ov.BackgroundColor3=Color3.new(0,0,0);ov.BackgroundTransparency=0.4;ov.ZIndex=50
@@ -815,7 +842,6 @@ function G.Sub(mf,title,builder)
     S.subMenu=ov
 end
 
--- Toggle with gear button
 function G.TGear(p,n,d,y,cb,gCb)
     local h=SC(32,40);local f=Instance.new("Frame",p);f.Size=UDim2.new(1,-16,0,h);f.Position=UDim2.new(0,8,0,y);f.BackgroundColor3=GC.pnl;f.BorderSizePixel=0;G.Crn(f,6)
     local gs=SC(22,28);local gb=Instance.new("TextButton",f);gb.Text="#";gb.Size=UDim2.new(0,gs,0,gs);gb.Position=UDim2.new(0,6,0.5,-gs/2);gb.BackgroundColor3=GC.ddBg;gb.TextColor3=GC.txtD;gb.TextSize=SC(13,15);gb.Font=Enum.Font.GothamBold;gb.AutoButtonColor=false;G.Crn(gb,4);gb.MouseButton1Click:Connect(function() CloseDD();if gCb then gCb() end end)
@@ -856,7 +882,6 @@ function G.Create()
     for i,td in ipairs(tabs) do local bt=Instance.new("TextButton",tb);bt.Text=td[2].." "..td[1];bt.Size=UDim2.new(tw,0,1,-3);bt.Position=UDim2.new(tw*(i-1),0,0,0);bt.BackgroundColor3=td[1]==curTab and GC.tabA or GC.tabBg;bt.TextColor3=td[1]==curTab and GC.acc or GC.txtD;bt.TextSize=SC(10,9);bt.Font=Enum.Font.GothamBold;bt.AutoButtonColor=false;bt.ZIndex=5;bt.BorderSizePixel=0;bt.MouseButton1Click:Connect(function() swTab(td[1]) end);tabBtns[td[1]]=bt;local sf=Instance.new("ScrollingFrame",cf);sf.Size=UDim2.new(1,0,1,0);sf.BackgroundColor3=GC.bg;sf.BackgroundTransparency=0;sf.BorderSizePixel=0;sf.ScrollBarThickness=SC(3,5);sf.ScrollBarImageColor3=GC.acc;sf.CanvasSize=UDim2.new(0,0,0,0);sf.Visible=(td[1]==curTab);sf:GetPropertyChangedSignal("CanvasPosition"):Connect(CloseDD);tabFrames[td[1]]=sf end
     local TH,SH,DH=SC(36,44),SC(50,58),SC(38,46)
 
-    -- ═══ AIM TAB ═══
     local sc=tabFrames["Aim"];local y=8
     y=G.Sec(sc,"AIM",y);y=y+4
     G.Tog(sc,"Aimbot",Cfg.On,y,function(v) Cfg.On=v;if not v then S.tgt.part=nil;S.tgt.plr=nil;S.tgt.vis=false end end);y=y+TH
@@ -876,7 +901,6 @@ function G.Create()
     G.Tog(sc,"Deep Scan (Arena)",Cfg.AC.DeepScan,y,function(v) Cfg.AC.DeepScan=v end);y=y+TH
     sc.CanvasSize=UDim2.new(0,0,0,y+10)
 
-    -- ═══ ESP TAB ═══
     sc=tabFrames["ESP"];y=8
     y=G.Sec(sc,"ESP",y);y=y+4
     G.Tog(sc,"ESP",Cfg.ESP.On,y,function(v) Cfg.ESP.On=v;if not v then E.DelAll() end end);y=y+TH
@@ -886,7 +910,6 @@ function G.Create()
     G.Sld(sc,"ESP FPS (0=MAX)",0,144,Cfg.ESP.Render.FPS,y,"%.0f",function(v) Cfg.ESP.Render.FPS=math.floor(v) end);y=y+SH
     G.Tog(sc,"Interpolation",Cfg.ESP.Render.Interp,y,function(v) Cfg.ESP.Render.Interp=v end);y=y+TH
 
-    -- Box with gear
     y=G.Sec(sc,"BOX",y+6);y=y+4
     G.TGear(sc,"Box",Cfg.ESP.Box.On,y,function(v) Cfg.ESP.Box.On=v end,function()
         G.Sub(main,"Box Settings",function(sub) local sy=8
@@ -950,7 +973,6 @@ function G.Create()
     G.Sld(sc,"Fill Trans",0,1,Cfg.WH.FT,y,"%.1f",function(v) Cfg.WH.FT=v end);y=y+SH
     sc.CanvasSize=UDim2.new(0,0,0,y+10)
 
-    -- ═══ COLORS TAB ═══
     sc=tabFrames["Colors"];y=8
     local function CSld(name,key,yy)
         local c=Cfg.ESP.Colors[key]
@@ -968,7 +990,6 @@ function G.Create()
     y=CSld("Outline","Outline",y);y=CSld("HP Low","HPLo",y);y=CSld("HP High","HPHi",y)
     sc.CanvasSize=UDim2.new(0,0,0,y+10)
 
-    -- ═══ MISC TAB ═══
     sc=tabFrames["Misc"];y=8
     y=G.Sec(sc,"HACKS",y);y=y+4
     G.Tog(sc,"3rd Person",Cfg.TP.On,y,function(v) Cfg.TP.On=v;if not v then Exp.RTP() end end);y=y+TH
@@ -993,9 +1014,8 @@ end
 
 function G.Destroy() CloseDD();CloseSub();if S.mobFrame then pcall(function() S.mobFrame:Destroy() end);S.mobFrame=nil end;if S.gui then pcall(function() S.gui:Destroy() end);S.gui=nil end end
 
--- ═══════════════════════════════════════
--- MAIN LOOP
--- ═══════════════════════════════════════
+-- MAIN
+
 local styleList={"Corner","Full","Glow","Cyber","Gradient"};local styleIdx=1
 
 local function Loop()
