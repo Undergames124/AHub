@@ -1,6 +1,3 @@
-
-
-```lua
 local ok, err = pcall(function()
 
 if _G.XenoLoaded then
@@ -996,4 +993,3 @@ Notify("Xeno v10","Loaded | "..Cfg.AimMode:upper(),5)
 
 end)
 if not ok then pcall(function() game:GetService("StarterGui"):SetCore("SendNotification",{Title="XENO ERROR",Text=tostring(err):sub(1,100),Duration=10}) end);warn("[XENO]",err) end
-```
