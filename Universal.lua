@@ -92,8 +92,8 @@ local function ScrC()
 end
 
 local function SDist(wp)
-    if local sp,on=W2S(wp)
-    d not sp or not on then return 9999 end
+    local sp,on=W2S(wp)
+    if not sp or not on then return 9999 end
     return(sp-ScrC()).Magnitude
 end
 
@@ -735,4 +735,4 @@ BuildGUI();InputSetup();MainLoop()
 Notify("Xeno v10.1","Loaded | "..Cfg.AimMode:upper(),5)
 
 end)
-if not ok then warn("[XENO]",err;pcall(function() game:GetService("StarterGui"):SetCore("SendNotification",{Title="XENO ERROR",Text=tostring(err):sub(1,100),Duration=10}) end) end
+if not ok then warn("[XENO]",err);pcall(function() game:GetService("StarterGui"):SetCore("SendNotification",{Title="XENO ERROR",Text=tostring(err):sub(1,100),Duration=10}) end) end
