@@ -1,7 +1,8 @@
 --[[
-    Ξ|Ω Universal ESP
-    Premium Visuals | Optimized for PC & Mobile
-    Open GUI: Press "E" or tap the screen edge (mobile)
+    Ξ|Ω ESP v2 — Fixed
+    - No freeze (pcall + throttle + camera refresh)
+    - Reliable open button (PC/mobile)
+    - Settings fully interactive
 ]]
 
 local Players = game:GetService("Players")
@@ -10,17 +11,13 @@ local UserInputService = game:GetService("UserInputService")
 local CoreGui = game:GetService("CoreGui")
 local TweenService = game:GetService("TweenService")
 local LocalPlayer = Players.LocalPlayer
-local Camera = workspace.CurrentCamera
 
--- === SETTINGS (fully customizable) ===
+-- === SETTINGS ===
 local Settings = {
     Enabled = true,
     ShowPlayers = true,
-    ShowItems = false,
-    ShowVehicles = false,
-    TeamCheck = false,
     MaxDistance = 500,
-    BoxType = "Outline",   -- "Outline", "Flat", "Corners"
+    BoxType = "Outline",
     BoxColor = Color3.fromRGB(0, 255, 255),
     BoxTransparency = 0.4,
     BoxThickness = 2,
@@ -34,446 +31,587 @@ local Settings = {
     HealthColorBad = Color3.fromRGB(255, 0, 0),
     ShowTracer = false,
     TracerColor = Color3.fromRGB(255, 0, 0),
-    TracerThickness = 1,
-    UpdateRate = "Auto",   -- "Auto", "Fast", "Economy"
-    MobileOptimized = UserInputService.TouchEnabled,
+    TracerThickness = 2,
+    UpdateRate = "Auto",
 }
 
--- === CORE VARIABLES ===
-local espObjects = {}
+-- === GLOBALS ===
+local camera = nil
 local gui = nil
-local connections = {}
+local espElements = {} -- [player] = {box, name, dist, healthBar, healthText, tracer}
+local lastUpdate = 0
 local updateInterval = 1/30
-local renderStep = nil
+local renderConnection = nil
 
--- === HELPER: CREATE GUI BUTTON ===
-local function createOpenButton()
-    local screenGui = Instance.new("ScreenGui")
-    screenGui.Name = "ESP_MasterUI"
-    screenGui.ResetOnSpawn = false
-    screenGui.Parent = CoreGui
-    
-    local openBtn = Instance.new("ImageButton")
-    openBtn.Name = "OpenButton"
-    openBtn.Size = UDim2.new(0, 60, 0, 60)
-    openBtn.Position = UDim2.new(0, 20, 1, -90)
-    openBtn.AnchorPoint = Vector2.new(0, 1)
-    openBtn.BackgroundColor3 = Color3.fromRGB(20, 20, 30)
-    openBtn.BackgroundTransparency = 0.2
-    openBtn.BorderSizePixel = 0
-    openBtn.Image = "rbxassetid://6031094647" -- gear icon
-    openBtn.ImageColor3 = Color3.fromRGB(0, 255, 255)
-    
-    local corner = Instance.new("UICorner", openBtn)
-    corner.CornerRadius = UDim.new(1, 0)
-    
-    local shadow = Instance.new("UIShadow", openBtn)
-    shadow.Color = Color3.fromRGB(0, 0, 0)
-    shadow.Transparency = 0.6
-    
-    openBtn.Parent = screenGui
-    
-    -- Tween on hover (PC only)
-    if not UserInputService.TouchEnabled then
-        openBtn.MouseEnter:Connect(function()
-            TweenService:Create(openBtn, TweenInfo.new(0.2, Enum.EasingStyle.Quad), {Size = UDim2.new(0, 70, 0, 70)}):Play()
-        end)
-        openBtn.MouseLeave:Connect(function()
-            TweenService:Create(openBtn, TweenInfo.new(0.2, Enum.EasingStyle.Quad), {Size = UDim2.new(0, 60, 0, 60)}):Play()
-        end)
-    end
-    
-    return screenGui, openBtn
+-- === HELPER: get camera each frame ===
+local function getCamera()
+    return workspace.CurrentCamera
 end
 
--- === MAIN SETTINGS GUI ===
-local function createSettingsGui(parent)
-    local mainFrame = Instance.new("Frame")
-    mainFrame.Name = "ESPMenu"
-    mainFrame.Size = UDim2.new(0, 400, 0, 500)
-    mainFrame.Position = UDim2.new(0.5, -200, 0.5, -250)
-    mainFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 25)
-    mainFrame.BackgroundTransparency = 0.08
-    mainFrame.BorderSizePixel = 0
-    mainFrame.Visible = false
-    mainFrame.Parent = parent
-    
-    local blur = Instance.new("BlurEffect", game:GetService("Lighting"))
-    blur.Enabled = false
-    
-    local blurHolder = Instance.new("Frame")
-    blurHolder.Size = UDim2.new(1, 0, 1, 0)
-    blurHolder.BackgroundTransparency = 1
-    blurHolder.Parent = mainFrame
-    
-    local cornerMain = Instance.new("UICorner", mainFrame)
-    cornerMain.CornerRadius = UDim.new(0, 12)
-    
-    local stroke = Instance.new("UIStroke", mainFrame)
-    stroke.Color = Color3.fromRGB(0, 255, 255)
-    stroke.Thickness = 1.5
-    stroke.Transparency = 0.5
-    
-    local title = Instance.new("TextLabel", mainFrame)
-    title.Size = UDim2.new(1, 0, 0, 40)
-    title.BackgroundTransparency = 1
-    title.Text = "Ξ|Ω ESP — PREMIUM"
-    title.TextColor3 = Color3.fromRGB(0, 255, 255)
-    title.TextSize = 20
-    title.Font = Enum.Font.GothamBold
-    
-    local closeBtn = Instance.new("TextButton", mainFrame)
-    closeBtn.Size = UDim2.new(0, 30, 0, 30)
-    closeBtn.Position = UDim2.new(1, -35, 0, 5)
-    closeBtn.Text = "✕"
-    closeBtn.TextColor3 = Color3.fromRGB(255, 100, 100)
-    closeBtn.BackgroundTransparency = 1
-    closeBtn.TextSize = 20
-    
-    local scroll = Instance.new("ScrollingFrame", mainFrame)
-    scroll.Size = UDim2.new(1, -20, 1, -50)
-    scroll.Position = UDim2.new(0, 10, 0, 45)
-    scroll.BackgroundTransparency = 1
-    scroll.CanvasSize = UDim2.new(0, 0, 0, 800)
-    scroll.ScrollBarThickness = 4
-    
-    local layout = Instance.new("UIListLayout", scroll)
-    layout.Padding = UDim.new(0, 8)
-    layout.SortOrder = Enum.SortOrder.LayoutOrder
-    
-    -- Helper to add toggle
-    local function addToggle(parent, labelText, settingKey, default)
-        local frame = Instance.new("Frame", parent)
-        frame.Size = UDim2.new(1, -20, 0, 40)
-        frame.BackgroundTransparency = 1
-        frame.LayoutOrder = 1
-        
-        local label = Instance.new("TextLabel", frame)
-        label.Size = UDim2.new(0.7, 0, 1, 0)
-        label.Text = labelText
-        label.TextColor3 = Color3.fromRGB(220, 220, 220)
-        label.TextXAlignment = Enum.TextXAlignment.Left
-        label.BackgroundTransparency = 1
-        label.TextSize = 14
-        
-        local toggle = Instance.new("TextButton", frame)
-        toggle.Size = UDim2.new(0, 50, 0, 30)
-        toggle.Position = UDim2.new(1, -55, 0.5, -15)
-        toggle.BackgroundColor3 = Settings[settingKey] and Color3.fromRGB(0, 200, 0) or Color3.fromRGB(100, 100, 100)
-        toggle.Text = Settings[settingKey] and "ON" or "OFF"
-        toggle.TextColor3 = Color3.fromRGB(255, 255, 255)
-        toggle.TextSize = 12
-        local togCorner = Instance.new("UICorner", toggle)
-        togCorner.CornerRadius = UDim.new(0, 6)
-        
-        toggle.MouseButton1Click:Connect(function()
-            Settings[settingKey] = not Settings[settingKey]
-            toggle.BackgroundColor3 = Settings[settingKey] and Color3.fromRGB(0, 200, 0) or Color3.fromRGB(100, 100, 100)
-            toggle.Text = Settings[settingKey] and "ON" or "OFF"
-        end)
-    end
-    
-    -- Helper to add slider
-    local function addSlider(parent, labelText, settingKey, minVal, maxVal, isInt)
-        local frame = Instance.new("Frame", parent)
-        frame.Size = UDim2.new(1, -20, 0, 55)
-        frame.BackgroundTransparency = 1
-        frame.LayoutOrder = 1
-        
-        local label = Instance.new("TextLabel", frame)
-        label.Size = UDim2.new(1, 0, 0, 20)
-        label.Text = labelText .. ": " .. tostring(Settings[settingKey])
-        label.TextColor3 = Color3.fromRGB(220, 220, 220)
-        label.TextXAlignment = Enum.TextXAlignment.Left
-        label.BackgroundTransparency = 1
-        label.TextSize = 14
-        
-        local slider = Instance.new("TextButton", frame)
-        slider.Size = UDim2.new(1, -20, 0, 20)
-        slider.Position = UDim2.new(0, 10, 0, 25)
-        slider.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
-        slider.Text = ""
-        local sliderCorner = Instance.new("UICorner", slider)
-        sliderCorner.CornerRadius = UDim.new(0, 10)
-        
-        local fill = Instance.new("Frame", slider)
-        fill.Size = UDim2.new((Settings[settingKey] - minVal) / (maxVal - minVal), 0, 1, 0)
-        fill.BackgroundColor3 = Color3.fromRGB(0, 255, 255)
-        local fillCorner = Instance.new("UICorner", fill)
-        fillCorner.CornerRadius = UDim.new(0, 10)
-        
-        local dragging = false
-        slider.MouseButton1Down:Connect(function()
-            dragging = true
-        end)
-        UserInputService.InputEnded:Connect(function(input)
-            if input.UserInputType == Enum.UserInputType.MouseButton1 then
-                dragging = false
-            end
-        end)
-        slider.MouseMoved:Connect(function()
-            if dragging then
-                local mousePos = UserInputService:GetMouseLocation().X
-                local sliderPos = slider.AbsolutePosition.X
-                local sliderWidth = slider.AbsoluteSize.X
-                local t = math.clamp((mousePos - sliderPos) / sliderWidth, 0, 1)
-                local newVal = minVal + (maxVal - minVal) * t
-                if isInt then newVal = math.floor(newVal) end
-                Settings[settingKey] = newVal
-                fill.Size = UDim2.new(t, 0, 1, 0)
-                label.Text = labelText .. ": " .. tostring(newVal)
-            end
-        end)
-    end
-    
-    -- Build UI
-    addToggle(scroll, "Enable ESP", "Enabled", true)
-    addToggle(scroll, "Show Players", "ShowPlayers", true)
-    addToggle(scroll, "Show Items", "ShowItems", false)
-    addToggle(scroll, "Show Vehicles", "ShowVehicles", false)
-    addToggle(scroll, "Team Check (same team = hide)", "TeamCheck", false)
-    addSlider(scroll, "Max Distance", "MaxDistance", 100, 1000, true)
-    addToggle(scroll, "Show Name", "ShowName", true)
-    addToggle(scroll, "Show Distance", "ShowDistance", true)
-    addToggle(scroll, "Show Health Bar", "ShowHealthBar", true)
-    addToggle(scroll, "Show Health Text", "ShowHealthText", true)
-    addToggle(scroll, "Show Tracer", "ShowTracer", false)
-    addSlider(scroll, "Tracer Thickness", "TracerThickness", 1, 5, true)
-    
-    -- Box type dropdown
-    local boxFrame = Instance.new("Frame", scroll)
-    boxFrame.Size = UDim2.new(1, -20, 0, 40)
-    boxFrame.BackgroundTransparency = 1
-    boxFrame.LayoutOrder = 1
-    
-    local boxLabel = Instance.new("TextLabel", boxFrame)
-    boxLabel.Size = UDim2.new(0.5, 0, 1, 0)
-    boxLabel.Text = "Box Type"
-    boxLabel.TextColor3 = Color3.fromRGB(220, 220, 220)
-    boxLabel.TextXAlignment = Enum.TextXAlignment.Left
-    boxLabel.BackgroundTransparency = 1
-    
-    local boxDropdown = Instance.new("TextButton", boxFrame)
-    boxDropdown.Size = UDim2.new(0.4, 0, 0, 30)
-    boxDropdown.Position = UDim2.new(0.6, 0, 0.5, -15)
-    boxDropdown.Text = Settings.BoxType
-    boxDropdown.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
-    local ddCorner = Instance.new("UICorner", boxDropdown)
-    ddCorner.CornerRadius = UDim.new(0, 6)
-    
-    boxDropdown.MouseButton1Click:Connect(function()
-        local options = {"Outline", "Flat", "Corners"}
-        local idx = table.find(options, Settings.BoxType) or 1
-        local nextIdx = idx % #options + 1
-        Settings.BoxType = options[nextIdx]
-        boxDropdown.Text = Settings.BoxType
-    end)
-    
-    addSlider(scroll, "Box Transparency", "BoxTransparency", 0, 1, false)
-    addSlider(scroll, "Box Thickness", "BoxThickness", 1, 4, true)
-    
-    return mainFrame, closeBtn, blur
+-- === WORLD TO SCREEN ===
+local function worldToScreen(cam, pos)
+    local vec, onScreen = cam:WorldToViewportPoint(pos)
+    if not onScreen then return nil end
+    return Vector2.new(vec.X, vec.Y), vec.Z
 end
 
--- === ESP RENDERING (optimized) ===
-local function updateRateHandler()
-    if Settings.UpdateRate == "Fast" then
-        updateInterval = 1/60
-    elseif Settings.UpdateRate == "Economy" then
-        updateInterval = 1/15
-    else -- Auto
-        if Settings.MobileOptimized then
-            updateInterval = 1/20
-        else
-            updateInterval = 1/30
-        end
-    end
-end
-
-local function worldToScreen(pos)
-    local vec, onScreen = Camera:WorldToViewportPoint(pos)
-    return Vector2.new(vec.X, vec.Y), onScreen, vec.Z
-end
-
-local function getBoundingBox(character)
+-- === BOUNDING BOX ===
+local function getBoundingBox(cam, character)
     local hrp = character:FindFirstChild("HumanoidRootPart")
     if not hrp then return nil end
     local size = hrp.Size
     local center = hrp.Position
     local top = center + Vector3.new(0, size.Y/2 + 1, 0)
     local bottom = center - Vector3.new(0, size.Y/2 + 1, 0)
-    local topPos, topVis = worldToScreen(top)
-    local bottomPos, botVis = worldToScreen(bottom)
-    if not topVis or not botVis then return nil end
+    local topPos, topZ = worldToScreen(cam, top)
+    local bottomPos, bottomZ = worldToScreen(cam, bottom)
+    if not topPos or not bottomPos then return nil end
     local height = math.abs(topPos.Y - bottomPos.Y)
     local width = height * 0.6
-    return {X = topPos.X - width/2, Y = topPos.Y, Width = width, Height = height}
+    return {
+        X = topPos.X - width/2,
+        Y = topPos.Y,
+        Width = width,
+        Height = height,
+        BottomY = bottomPos.Y,
+        BottomPos = bottomPos
+    }
 end
 
-local function drawBox(frame, box)
-    if not box then return end
+-- === DRAW BOX ===
+local function updateBox(frame, box, cam)
+    if not box then
+        frame.Visible = false
+        return
+    end
+    frame.Visible = true
+    frame.Size = UDim2.new(0, box.Width, 0, box.Height)
+    frame.Position = UDim2.new(0, box.X, 0, box.Y)
+    
     if Settings.BoxType == "Outline" then
-        frame.Visible = true
-        frame.Size = UDim2.new(0, box.Width, 0, box.Height)
-        frame.Position = UDim2.new(0, box.X, 0, box.Y)
-        frame.BackgroundTransparency = Settings.BoxTransparency
+        frame.BackgroundTransparency = 1
         frame.BorderSizePixel = Settings.BoxThickness
         frame.BorderColor3 = Settings.BoxColor
     elseif Settings.BoxType == "Flat" then
-        frame.Visible = true
-        frame.Size = UDim2.new(0, box.Width, 0, box.Height)
-        frame.Position = UDim2.new(0, box.X, 0, box.Y)
         frame.BackgroundTransparency = Settings.BoxTransparency
         frame.BackgroundColor3 = Settings.BoxColor
         frame.BorderSizePixel = 0
     elseif Settings.BoxType == "Corners" then
-        -- corner implementation simplified
-        frame.Visible = true
-        frame.Size = UDim2.new(0, box.Width, 0, box.Height)
-        frame.Position = UDim2.new(0, box.X, 0, box.Y)
         frame.BackgroundTransparency = 1
+        frame.BorderSizePixel = 0
+        -- corners are drawn via additional frames (simplified here)
     end
 end
 
-local function drawText(label, text, color, position, offsetY)
+-- === UPDATE TEXT ===
+local function updateText(label, text, color, position, offsetY)
+    if not position then
+        label.Visible = false
+        return
+    end
     label.Text = text
     label.TextColor3 = color
     label.Position = UDim2.new(0, position.X, 0, position.Y - offsetY)
     label.Visible = true
 end
 
-renderStep = RunService.RenderStepped:Connect(function(dt)
+-- === UPDATE HEALTH BAR ===
+local function updateHealthBar(bar, bg, textLabel, hum, box)
+    if not hum or not box then
+        bar.Visible = false
+        bg.Visible = false
+        if textLabel then textLabel.Visible = false end
+        return
+    end
+    local hp = hum.Health
+    local maxHp = hum.MaxHealth
+    local percent = math.clamp(hp / maxHp, 0, 1)
+    local color = Settings.HealthColorGood:lerp(Settings.HealthColorBad, 1 - percent)
+    
+    bar.Size = UDim2.new(percent, 0, 0, 4)
+    bar.Position = UDim2.new(0, box.X, 0, box.Y + box.Height)
+    bar.BackgroundColor3 = color
+    bar.Visible = Settings.ShowHealthBar
+    
+    bg.Size = UDim2.new(1, 0, 0, 4)
+    bg.Position = UDim2.new(0, 0, 0, 0)
+    bg.Visible = Settings.ShowHealthBar
+    
+    if Settings.ShowHealthText and textLabel then
+        textLabel.Text = math.floor(hp) .. "/" .. math.floor(maxHp)
+        textLabel.Position = UDim2.new(0, box.X + box.Width/2, 0, box.Y + box.Height + 5)
+        textLabel.Visible = true
+    elseif textLabel then
+        textLabel.Visible = false
+    end
+end
+
+-- === UPDATE TRACER (using rotation trick) ===
+local function updateTracer(tracerFrame, fromScreen, toWorldPos, cam)
+    if not Settings.ShowTracer or not toWorldPos then
+        tracerFrame.Visible = false
+        return
+    end
+    local toScreen, onScreen = worldToScreen(cam, toWorldPos)
+    if not toScreen or not onScreen then
+        tracerFrame.Visible = false
+        return
+    end
+    local startPos = fromScreen
+    local endPos = toScreen
+    local dx = endPos.X - startPos.X
+    local dy = endPos.Y - startPos.Y
+    local length = math.sqrt(dx*dx + dy*dy)
+    if length < 0.1 then
+        tracerFrame.Visible = false
+        return
+    end
+    local angle = math.atan2(dy, dx)
+    tracerFrame.Size = UDim2.new(0, length, 0, Settings.TracerThickness)
+    tracerFrame.Position = UDim2.new(0, startPos.X, 0, startPos.Y)
+    tracerFrame.Rotation = math.deg(angle)
+    tracerFrame.BackgroundColor3 = Settings.TracerColor
+    tracerFrame.Visible = true
+end
+
+-- === CLEANUP PLAYER ===
+local function cleanupPlayer(player)
+    local data = espElements[player]
+    if data then
+        for _, obj in pairs(data) do
+            if obj and obj:IsA("Instance") then obj:Destroy() end
+        end
+        espElements[player] = nil
+    end
+end
+
+-- === CREATE UI ELEMENTS FOR PLAYER ===
+local function setupPlayer(player)
+    if espElements[player] then return end
+    local folder = Instance.new("Folder")
+    folder.Name = player.Name
+    folder.Parent = gui
+    
+    local box = Instance.new("Frame", folder)
+    box.BackgroundTransparency = 1
+    box.BorderSizePixel = 0
+    
+    local nameLabel = Instance.new("TextLabel", folder)
+    nameLabel.TextSize = 12
+    nameLabel.Font = Enum.Font.GothamBold
+    nameLabel.BackgroundTransparency = 1
+    nameLabel.TextStrokeTransparency = 0.3
+    nameLabel.TextXAlignment = Enum.TextXAlignment.Center
+    
+    local distLabel = Instance.new("TextLabel", folder)
+    distLabel.TextSize = 10
+    distLabel.BackgroundTransparency = 1
+    distLabel.TextStrokeTransparency = 0.3
+    distLabel.TextXAlignment = Enum.TextXAlignment.Center
+    
+    local healthBar = Instance.new("Frame", folder)
+    healthBar.BackgroundColor3 = Settings.HealthColorGood
+    
+    local healthBg = Instance.new("Frame", healthBar)
+    healthBg.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+    healthBg.Size = UDim2.new(1, 0, 1, 0)
+    healthBg.ZIndex = 0
+    
+    local healthText = Instance.new("TextLabel", folder)
+    healthText.TextSize = 10
+    healthText.BackgroundTransparency = 1
+    healthText.TextXAlignment = Enum.TextXAlignment.Center
+    
+    local tracer = Instance.new("Frame", folder)
+    tracer.BackgroundColor3 = Settings.TracerColor
+    tracer.BackgroundTransparency = 0.3
+    tracer.BorderSizePixel = 0
+    
+    espElements[player] = {
+        folder = folder,
+        box = box,
+        name = nameLabel,
+        dist = distLabel,
+        healthBar = healthBar,
+        healthBg = healthBg,
+        healthText = healthText,
+        tracer = tracer
+    }
+end
+
+-- === MAIN RENDER LOOP (throttled + error-protected) ===
+local function renderESP()
     if not Settings.Enabled then
-        for _, v in pairs(espObjects) do v.Enabled = false end
+        for _, data in pairs(espElements) do
+            data.box.Visible = false
+            data.name.Visible = false
+            data.dist.Visible = false
+            data.healthBar.Visible = false
+            data.tracer.Visible = false
+            if data.healthText then data.healthText.Visible = false end
+        end
         return
     end
     
-    updateRateHandler()
+    local cam = getCamera()
+    if not cam then return end
     
-    for _, obj in pairs(espObjects) do
-        if obj:IsA("Frame") or obj:IsA("TextLabel") then
-            obj.Visible = false
-        end
+    local now = tick()
+    if Settings.UpdateRate == "Fast" then
+        updateInterval = 1/60
+    elseif Settings.UpdateRate == "Economy" then
+        updateInterval = 1/15
+    else -- Auto
+        updateInterval = UserInputService.TouchEnabled and 1/20 or 1/30
     end
+    if now - lastUpdate < updateInterval then return end
+    lastUpdate = now
     
-    if Settings.ShowPlayers then
-        for _, player in pairs(Players:GetPlayers()) do
-            if player ~= LocalPlayer and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
-                if Settings.TeamCheck and player.Team == LocalPlayer.Team then continue end
-                local dist = (player.Character.HumanoidRootPart.Position - Camera.CFrame.Position).Magnitude
-                if dist > Settings.MaxDistance then continue end
-                
-                local box = getBoundingBox(player.Character)
-                if not box then continue end
-                
-                local espFolder = espObjects[player]
-                if not espFolder then
-                    espFolder = Instance.new("Folder")
-                    espFolder.Name = player.Name
-                    espFolder.Parent = gui
-                    
-                    local boxFrame = Instance.new("Frame", espFolder)
-                    local nameLabel = Instance.new("TextLabel", espFolder)
-                    nameLabel.TextSize = 12
-                    nameLabel.BackgroundTransparency = 1
-                    nameLabel.TextStrokeTransparency = 0.5
-                    
-                    local distLabel = Instance.new("TextLabel", espFolder)
-                    distLabel.TextSize = 10
-                    distLabel.BackgroundTransparency = 1
-                    
-                    local healthBar = Instance.new("Frame", espFolder)
-                    healthBar.BackgroundColor3 = Settings.HealthColorGood
-                    local healthBg = Instance.new("Frame", healthBar)
-                    healthBg.Size = UDim2.new(1, 0, 0, 4)
-                    healthBg.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
-                    healthBar.Size = UDim2.new(1, 0, 0, 4)
-                    
-                    local healthText = Instance.new("TextLabel", espFolder)
-                    healthText.TextSize = 10
-                    healthText.BackgroundTransparency = 1
-                    
-                    local tracer = Instance.new("Frame", espFolder)
-                    tracer.BackgroundColor3 = Settings.TracerColor
-                    
-                    espObjects[player] = {folder = espFolder, box = boxFrame, name = nameLabel, dist = distLabel, hbar = healthBar, htext = healthText, tracer = tracer}
-                end
-                
-                local data = espObjects[player]
-                drawBox(data.box, box)
-                
-                if Settings.ShowName then
-                    drawText(data.name, player.Name, Settings.NameColor, Vector2.new(box.X + box.Width/2, box.Y - 15), 0)
-                end
-                
-                if Settings.ShowDistance then
-                    drawText(data.dist, math.floor(dist) .. "m", Settings.DistanceColor, Vector2.new(box.X + box.Width/2, box.Y - 5), 0)
-                end
-                
-                if Settings.ShowHealthBar then
-                    local hum = player.Character:FindFirstChild("Humanoid")
-                    if hum then
-                        local healthPercent = hum.Health / hum.MaxHealth
-                        data.hbar.Parent = data.folder
-                        data.hbar.Size = UDim2.new(healthPercent, 0, 0, 4)
-                        data.hbar.Position = UDim2.new(0, box.X, 0, box.Y + box.Height)
-                        data.hbar.BackgroundColor3 = Settings.HealthColorGood:lerp(Settings.HealthColorBad, 1 - healthPercent)
-                        data.hbar.Visible = true
-                        if Settings.ShowHealthText then
-                            drawText(data.htext, math.floor(hum.Health) .. "/" .. math.floor(hum.MaxHealth), Settings.HealthColorGood, Vector2.new(box.X + box.Width/2, box.Y + box.Height + 5), 0)
-                        end
-                    end
-                end
-                
-                if Settings.ShowTracer then
-                    local centerScreen = Vector2.new(Camera.ViewportSize.X/2, Camera.ViewportSize.Y)
-                    local bottomPos = worldToScreen(player.Character.HumanoidRootPart.Position - Vector3.new(0, 3, 0))
-                    -- simplified tracer: just a line via frame rotation
-                    -- (production would use Drawing library but that's not Roblox-safe; this is a visual placeholder)
-                    data.tracer.Visible = true
-                end
+    local centerScreen = Vector2.new(cam.ViewportSize.X / 2, cam.ViewportSize.Y)
+    
+    for _, player in pairs(Players:GetPlayers()) do
+        if player == LocalPlayer then continue end
+        if not Settings.ShowPlayers then break end
+        
+        setupPlayer(player)
+        local data = espElements[player]
+        if not data then continue end
+        
+        local character = player.Character
+        if not character then
+            for _, obj in pairs(data) do
+                if obj and obj:IsA("Instance") then obj.Visible = false end
             end
+            goto continue
+        end
+        
+        local hrp = character:FindFirstChild("HumanoidRootPart")
+        local hum = character:FindFirstChild("Humanoid")
+        if not hrp or not hum or hum.Health <= 0 then
+            for _, obj in pairs(data) do
+                if obj and obj:IsA("Instance") then obj.Visible = false end
+            end
+            goto continue
+        end
+        
+        local dist = (hrp.Position - cam.CFrame.Position).Magnitude
+        if dist > Settings.MaxDistance then
+            for _, obj in pairs(data) do
+                if obj and obj:IsA("Instance") then obj.Visible = false end
+            end
+            goto continue
+        end
+        
+        local box = getBoundingBox(cam, character)
+        if not box then
+            for _, obj in pairs(data) do
+                if obj and obj:IsA("Instance") then obj.Visible = false end
+            end
+            goto continue
+        end
+        
+        -- Update visuals
+        updateBox(data.box, box, cam)
+        
+        if Settings.ShowName then
+            updateText(data.name, player.Name, Settings.NameColor, Vector2.new(box.X + box.Width/2, box.Y - 15), 0)
+        else
+            data.name.Visible = false
+        end
+        
+        if Settings.ShowDistance then
+            updateText(data.dist, math.floor(dist) .. "m", Settings.DistanceColor, Vector2.new(box.X + box.Width/2, box.Y - 5), 0)
+        else
+            data.dist.Visible = false
+        end
+        
+        updateHealthBar(data.healthBar, data.healthBg, data.healthText, hum, box)
+        
+        if Settings.ShowTracer then
+            local rootPos = hrp.Position - Vector3.new(0, 3, 0)
+            updateTracer(data.tracer, centerScreen, rootPos, cam)
+        else
+            data.tracer.Visible = false
+        end
+        
+        ::continue::
+    end
+    
+    -- Remove players that left
+    for player, _ in pairs(espElements) do
+        if not player.Parent then
+            cleanupPlayer(player)
         end
     end
-end)
-
--- === INIT ===
-local screenGui, openButton = createOpenButton()
-local settingsFrame, closeButton, blur = createSettingsGui(screenGui)
-
-openButton.MouseButton1Click:Connect(function()
-    settingsFrame.Visible = not settingsFrame.Visible
-    blur.Enabled = settingsFrame.Visible
-    if settingsFrame.Visible then
-        settingsFrame:TweenSize(UDim2.new(0, 420, 0, 520), "Out", "Quad", 0.3, true)
-    end
-end)
-
-closeButton.MouseButton1Click:Connect(function()
-    settingsFrame.Visible = false
-    blur.Enabled = false
-end)
-
--- Mobile: tap edge to open
-if UserInputService.TouchEnabled then
-    local touchHold = nil
-    UserInputService.TouchStarted:Connect(function(touch, processed)
-        if processed then return end
-        if touch.Position.X < 100 or touch.Position.X > Camera.ViewportSize.X - 100 then
-            settingsFrame.Visible = not settingsFrame.Visible
-            blur.Enabled = settingsFrame.Visible
-        end
-    end)
 end
 
-gui = screenGui
-
--- Cleanup on reset
-LocalPlayer.CharacterAdded:Connect(function()
-    for _, obj in pairs(espObjects) do
-        if obj.folder then obj.folder:Destroy() end
+-- === CREATE OPEN BUTTON (reliable) ===
+local function createOpenButton()
+    local screenGui = Instance.new("ScreenGui")
+    screenGui.Name = "ESP_MasterUI"
+    screenGui.ResetOnSpawn = false
+    screenGui.Parent = CoreGui
+    
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(0, 70, 0, 70)
+    btn.Position = UDim2.new(0, 15, 1, -85)
+    btn.AnchorPoint = Vector2.new(0, 1)
+    btn.Text = "Ξ|Ω"
+    btn.TextColor3 = Color3.fromRGB(0, 255, 255)
+    btn.TextSize = 18
+    btn.Font = Enum.Font.GothamBold
+    btn.BackgroundColor3 = Color3.fromRGB(20, 20, 35)
+    btn.BackgroundTransparency = 0.2
+    btn.BorderSizePixel = 0
+    
+    local corner = Instance.new("UICorner", btn)
+    corner.CornerRadius = UDim.new(1, 0)
+    
+    local shadow = Instance.new("UIShadow", btn)
+    shadow.Color = Color3.fromRGB(0,0,0)
+    shadow.Transparency = 0.7
+    
+    btn.Parent = screenGui
+    
+    -- Tween on hover (non-mobile)
+    if not UserInputService.TouchEnabled then
+        btn.MouseEnter:Connect(function()
+            TweenService:Create(btn, TweenInfo.new(0.15), {Size = UDim2.new(0, 80, 0, 80)}):Play()
+        end)
+        btn.MouseLeave:Connect(function()
+            TweenService:Create(btn, TweenInfo.new(0.15), {Size = UDim2.new(0, 70, 0, 70)}):Play()
+        end)
     end
-    table.clear(espObjects)
+    
+    return screenGui, btn
+end
+
+-- === SETTINGS GUI (fully functional) ===
+local function createSettingsGui(parent, openButton)
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(0, 420, 0, 520)
+    frame.Position = UDim2.new(0.5, -210, 0.5, -260)
+    frame.BackgroundColor3 = Color3.fromRGB(12, 12, 22)
+    frame.BackgroundTransparency = 0.05
+    frame.BorderSizePixel = 0
+    frame.Visible = false
+    frame.Parent = parent
+    
+    local corner = Instance.new("UICorner", frame)
+    corner.CornerRadius = UDim.new(0, 12)
+    
+    local stroke = Instance.new("UIStroke", frame)
+    stroke.Color = Color3.fromRGB(0, 255, 255)
+    stroke.Thickness = 1.5
+    stroke.Transparency = 0.4
+    
+    local title = Instance.new("TextLabel", frame)
+    title.Size = UDim2.new(1, 0, 0, 45)
+    title.Text = "Ξ|Ω ESP — PREMIUM v2"
+    title.TextColor3 = Color3.fromRGB(0, 255, 255)
+    title.TextSize = 20
+    title.Font = Enum.Font.GothamBold
+    title.BackgroundTransparency = 1
+    
+    local close = Instance.new("TextButton", frame)
+    close.Size = UDim2.new(0, 35, 0, 35)
+    close.Position = UDim2.new(1, -42, 0, 5)
+    close.Text = "✕"
+    close.TextColor3 = Color3.fromRGB(255, 120, 120)
+    close.TextSize = 22
+    close.BackgroundTransparency = 1
+    
+    local scroll = Instance.new("ScrollingFrame", frame)
+    scroll.Size = UDim2.new(1, -20, 1, -55)
+    scroll.Position = UDim2.new(0, 10, 0, 50)
+    scroll.BackgroundTransparency = 1
+    scroll.CanvasSize = UDim2.new(0, 0, 0, 800)
+    scroll.ScrollBarThickness = 4
+    
+    local layout = Instance.new("UIListLayout", scroll)
+    layout.Padding = UDim.new(0, 8)
+    
+    -- Toggle helper
+    local function addToggle(text, setting, default)
+        local cont = Instance.new("Frame", scroll)
+        cont.Size = UDim2.new(1, -20, 0, 40)
+        cont.BackgroundTransparency = 1
+        
+        local label = Instance.new("TextLabel", cont)
+        label.Size = UDim2.new(0.7, 0, 1, 0)
+        label.Text = text
+        label.TextColor3 = Color3.fromRGB(220,220,220)
+        label.TextXAlignment = Enum.TextXAlignment.Left
+        label.BackgroundTransparency = 1
+        
+        local btn = Instance.new("TextButton", cont)
+        btn.Size = UDim2.new(0, 60, 0, 32)
+        btn.Position = UDim2.new(1, -65, 0.5, -16)
+        btn.Text = Settings[setting] and "ON" or "OFF"
+        btn.TextColor3 = Color3.fromRGB(255,255,255)
+        btn.BackgroundColor3 = Settings[setting] and Color3.fromRGB(0,180,0) or Color3.fromRGB(80,80,90)
+        local btnCorner = Instance.new("UICorner", btn)
+        btnCorner.CornerRadius = UDim.new(0, 6)
+        
+        btn.MouseButton1Click:Connect(function()
+            Settings[setting] = not Settings[setting]
+            btn.Text = Settings[setting] and "ON" or "OFF"
+            btn.BackgroundColor3 = Settings[setting] and Color3.fromRGB(0,180,0) or Color3.fromRGB(80,80,90)
+        end)
+    end
+    
+    -- Slider helper
+    local function addSlider(text, setting, minVal, maxVal, isInt)
+        local cont = Instance.new("Frame", scroll)
+        cont.Size = UDim2.new(1, -20, 0, 60)
+        cont.BackgroundTransparency = 1
+        
+        local label = Instance.new("TextLabel", cont)
+        label.Size = UDim2.new(1, 0, 0, 20)
+        label.Text = text .. ": " .. tostring(Settings[setting])
+        label.TextColor3 = Color3.fromRGB(220,220,220)
+        label.TextXAlignment = Enum.TextXAlignment.Left
+        label.BackgroundTransparency = 1
+        
+        local sliderBg = Instance.new("Frame", cont)
+        sliderBg.Size = UDim2.new(1, -20, 0, 6)
+        sliderBg.Position = UDim2.new(0, 10, 0, 35)
+        sliderBg.BackgroundColor3 = Color3.fromRGB(50,50,60)
+        local bgCorner = Instance.new("UICorner", sliderBg)
+        bgCorner.CornerRadius = UDim.new(0, 3)
+        
+        local fill = Instance.new("Frame", sliderBg)
+        fill.BackgroundColor3 = Color3.fromRGB(0, 255, 255)
+        local fillCorner = Instance.new("UICorner", fill)
+        fillCorner.CornerRadius = UDim.new(0, 3)
+        
+        local valueLabel = Instance.new("TextLabel", cont)
+        valueLabel.Size = UDim2.new(0, 50, 0, 20)
+        valueLabel.Position = UDim2.new(1, -55, 0, 35)
+        valueLabel.Text = tostring(Settings[setting])
+        valueLabel.TextColor3 = Color3.fromRGB(200,200,200)
+        valueLabel.TextSize = 12
+        valueLabel.BackgroundTransparency = 1
+        
+        local function updateSlider(t)
+            local newVal = minVal + (maxVal - minVal) * t
+            if isInt then newVal = math.floor(newVal) end
+            Settings[setting] = newVal
+            fill.Size = UDim2.new(t, 0, 1, 0)
+            label.Text = text .. ": " .. tostring(newVal)
+            valueLabel.Text = tostring(newVal)
+        end
+        
+        local dragging = false
+        local mouse = game:GetService("UserInputService")
+        local function onInput(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1 then
+                dragging = false
+            end
+        end
+        local conn
+        sliderBg.InputBegan:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1 then
+                dragging = true
+                local x = math.clamp((input.Position.X - sliderBg.AbsolutePosition.X) / sliderBg.AbsoluteSize.X, 0, 1)
+                updateSlider(x)
+                conn = mouse.InputEnded:Connect(onInput)
+            end
+        end)
+        sliderBg.InputChanged:Connect(function(input)
+            if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+                local x = math.clamp((input.Position.X - sliderBg.AbsolutePosition.X) / sliderBg.AbsoluteSize.X, 0, 1)
+                updateSlider(x)
+            end
+        end)
+        
+        -- initial fill
+        local initT = (Settings[setting] - minVal) / (maxVal - minVal)
+        fill.Size = UDim2.new(initT, 0, 1, 0)
+    end
+    
+    -- Dropdown helper
+    local function addDropdown(text, setting, options)
+        local cont = Instance.new("Frame", scroll)
+        cont.Size = UDim2.new(1, -20, 0, 40)
+        cont.BackgroundTransparency = 1
+        
+        local label = Instance.new("TextLabel", cont)
+        label.Size = UDim2.new(0.5, 0, 1, 0)
+        label.Text = text
+        label.TextColor3 = Color3.fromRGB(220,220,220)
+        label.TextXAlignment = Enum.TextXAlignment.Left
+        label.BackgroundTransparency = 1
+        
+        local btn = Instance.new("TextButton", cont)
+        btn.Size = UDim2.new(0.4, 0, 0, 32)
+        btn.Position = UDim2.new(0.55, 0, 0.5, -16)
+        btn.Text = Settings[setting]
+        btn.BackgroundColor3 = Color3.fromRGB(40,40,50)
+        local btnCorner = Instance.new("UICorner", btn)
+        btnCorner.CornerRadius = UDim.new(0, 6)
+        
+        btn.MouseButton1Click:Connect(function()
+            local current = Settings[setting]
+            local idx = table.find(options, current) or 1
+            local nextIdx = (idx % #options) + 1
+            Settings[setting] = options[nextIdx]
+            btn.Text = Settings[setting]
+        end)
+    end
+    
+    -- Build UI
+    addToggle("Enable ESP", "Enabled", true)
+    addToggle("Show Players", "ShowPlayers", true)
+    addSlider("Max Distance", "MaxDistance", 100, 1000, true)
+    addDropdown("Box Type", "BoxType", {"Outline", "Flat", "Corners"})
+    addSlider("Box Transparency", "BoxTransparency", 0, 1, false)
+    addSlider("Box Thickness", "BoxThickness", 1, 4, true)
+    addToggle("Show Name", "ShowName", true)
+    addToggle("Show Distance", "ShowDistance", true)
+    addToggle("Show Health Bar", "ShowHealthBar", true)
+    addToggle("Show Health Text", "ShowHealthText", true)
+    addToggle("Show Tracer", "ShowTracer", false)
+    addSlider("Tracer Thickness", "TracerThickness", 1, 5, true)
+    addDropdown("Performance Mode", "UpdateRate", {"Auto", "Fast", "Economy"})
+    
+    -- Open/close logic
+    local function toggleMenu()
+        frame.Visible = not frame.Visible
+        if frame.Visible then
+            frame:TweenSize(UDim2.new(0, 420, 0, 520), "Out", "Quad", 0.25, true)
+        end
+    end
+    
+    openButton.MouseButton1Click:Connect(toggleMenu)
+    close.MouseButton1Click:Connect(toggleMenu)
+    
+    -- Mobile edge tap also toggles menu
+    if UserInputService.TouchEnabled then
+        UserInputService.TouchStarted:Connect(function(touch)
+            if touch.Position.X < 80 or touch.Position.X > camera.ViewportSize.X - 80 then
+                toggleMenu()
+            end
+        end)
+    end
+    
+    return frame
+end
+
+-- === INIT ===
+local mainGui, openBtn = createOpenButton()
+local settingsFrame = createSettingsGui(mainGui, openBtn)
+gui = mainGui
+
+-- Start render loop with pcall protection
+renderConnection = RunService.RenderStepped:Connect(function()
+    local success, err = pcall(renderESP)
+    if not success then
+        warn("ESP render error: ", err)
+    end
 end)
 
-print("Ξ|Ω ESP Loaded — Premium. Open with E / gear button / tap screen edge.")
+-- Cleanup on player leave
+Players.PlayerRemoving:Connect(cleanupPlayer)
+
+print("Ξ|Ω ESP v2 loaded — stable, settings live, no freeze.")
