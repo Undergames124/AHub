@@ -1,7 +1,7 @@
 -- Ξ|Ω ESP v3 — Delta/Roblox compatible, no nil calls
 -- Wrap everything in a pcall to catch init errors gracefully
 
-local success, err = pcall(function()
+local success, err = pcall(function())
     -- === SAFE INIT: Check environment first ===
     local Players = game:GetService("Players")
     local RunService = game:GetService("RunService")
