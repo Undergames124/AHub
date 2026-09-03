@@ -7,7 +7,7 @@
   ██║ ╚═╝ ██║██║ ╚═╝ ██║██████╔╝    ██║  ██║╚██████╔╝██║
   ╚═╝     ╚═╝╚═╝     ╚═╝╚═════╝     ╚═╝  ╚═╝ ╚═════╝ ╚═╝
 --------------------------------------------------------------------------------
-  MM2 HUB X  •  v2.6.1  •  KEYLESS  •  Murder Mystery 2
+  MM2 HUB X  •  v2.6.2  •  KEYLESS  •  Murder Mystery 2
   FIX 2.6.1     : unpack() -> UNPACK (в Luau нет глобального unpack),
                   убран continue (ломается на KRNL/старых Fluxus),
                   добавлены фолбэки table.clear / typeof,
@@ -50,6 +50,57 @@ end
 
 -- typeof есть в Luau всегда, но на всякий случай страхуемся
 local TYPEOF = (typeof and typeof) or type
+
+--==============================================================================
+-- 0b. САМОТЕСТ ОКРУЖЕНИЯ — печатает, чего не хватает (diagnostics)
+--     Если что-то из этого nil, скрипт скажет об этом СРАЗУ и словами,
+--     а не молча упадёт с "attempt to call a nil value".
+--==============================================================================
+local SELFTEST = {
+    { "loadstring",  "компиляция чанков" },
+    { "HttpService", "сериализация конфига" },
+    { "task",        "task.delay / task.spawn" },
+    { "Drawing",     "ESP на Drawing API (есть фолбэк на Highlight)" },
+    { "writefile",   "сохранение конфига (есть фолбэк в память)" },
+    { "hookmetamethod", "Silent Aim (работает без него через камеру)" },
+    { "firetouchinterest", "мгновенный килл методом Touch (есть Remote/Hybrid)" },
+    { "setclipboard",   "копирование Job ID" },
+    { "request",        "Server Hop" },
+}
+local function SelfTest()
+    print("=== [MM2 HUB X] САМОТЕСТ ОКРУЖЕНИЯ ===")
+    for _, item in ipairs(SELFTEST) do
+        local name, why = item[1], item[2]
+        local ok, val = pcall(function() return getfenv and getfenv()[name] or _G[name] end)
+        local exists = (ok and val ~= nil) or pcall(function() return game:GetService(name) end)
+        if exists then
+            print(("  ✓ %-20s %s"):format(name, why))
+        else
+            print(("  ✗ %-20s ОТСУТСТВУЕТ — %s"):format(name, why))
+        end
+    end
+    print(("  исполнитель: %s | место: %s"):format(
+        tostring(ExecName or "unknown"),
+        tostring(CoreGui and "CoreGui (скрыто)" or "PlayerGui (видимо)")))
+end
+
+-- Глобальный перехват ошибок: вместо криптичного сообщения — понятный вывод
+-- с НАСТОЯЩИМ номером строки (executor часто врёт и пишет :1: для всего чанка)
+local function SafeRun(fn)
+    local ok, err = xpcall(fn, function(e)
+        return debug and debug.traceback and debug.traceback(e, 2) or tostring(e)
+    end)
+    if not ok then
+        warn("╔══════════════════════════════════════════════════════╗")
+        warn("║  MM2 HUB X — ОШИБКА ВЫПОЛНЕНИЯ                        ║")
+        warn("╚══════════════════════════════════════════════════════╝")
+        warn(tostring(err))
+        warn("→ Если выше строка с номером — это НАСТОЯЩЕЕ место ошибки.")
+        warn("→ Если написано просто ':1:' — скрипт не догрузился целиком.")
+        warn("→ Решение: копируй ВЕСЬ файл кнопкой на сайте и вставляй целиком.")
+    end
+    return ok, err
+end
 
 -- continue недоступен в части исполнителей (KRNL, старые Fluxus/Codex) —
 -- по всему скрипту используется инвертированное условие вместо него.
@@ -2344,7 +2395,7 @@ end
 --==============================================================================
 -- 16. СБОРКА ИНТЕРФЕЙСА
 --==============================================================================
-local Window = UI.new({ Title = "MM2 HUB X", Version = "2.6.1" })
+local Window = UI.new({ Title = "MM2 HUB X", Version = "2.6.2" })
 
 -- ------------------------------- LEGIT --------------------------------------
 local Legit = Window:Tab("Legit", 1)
@@ -2573,7 +2624,7 @@ end })
 UI:Paragraph(SetTab, {
     Title = "ℹ Инфо",
     Content = ("Исполнитель: %s\nDrawing API: %s\nwritefile: %s\nhookmetamethod: %s\nВерсия: %s")
-        :format(ExecName, tostring(HAS_DRAWING), tostring(HAS_WRITEFILE), tostring(HAS_HOOKMETA), "2.6.1"),
+        :format(ExecName, tostring(HAS_DRAWING), tostring(HAS_WRITEFILE), tostring(HAS_HOOKMETA), "2.6.2"),
 })
 UI:Paragraph(SetTab, {
     Title = "⚠ Отказ от ответственности",
@@ -2585,10 +2636,12 @@ UI:Paragraph(SetTab, {
 -- 17. СТАРТ
 --==============================================================================
 task.delay(1, function()
-    Util.notify("MM2 HUB X 2.6.1", "Загружен | " .. ExecName .. " | RightControl = свернуть", 5)
-    print(("=== MM2 HUB X 2.6.1 ===\nexecutor: %s | drawing: %s | writefile: %s | hook: %s | players: %d | фарм-режим: %s")
+    Util.notify("MM2 HUB X 2.6.2", "Загружен | " .. ExecName .. " | RightControl = свернуть", 5)
+    print(("=== MM2 HUB X 2.6.2 ===\nexecutor: %s | drawing: %s | writefile: %s | hook: %s | players: %d | фарм-режим: %s")
         :format(ExecName, tostring(HAS_DRAWING), tostring(HAS_WRITEFILE), tostring(HAS_HOOKMETA), #PlayerList + 1, tostring(Config.CoinMode)))
     print("[MM2 HUB X] Позиция спавна: " .. tostring(SpawnPos))
+    pcall(SelfTest) -- печатает, чего не хватает в твоём executor
+    print("[MM2 HUB X] Если видишь этот текст — скрипт загрузился ПОЛНОСТЬЮ и работает.")
     if Config.SilentAim then Combat.startSilentAim() end
     if Config.CoinFarm and Config.CoinMode == "Pathfind" then
         Util.notify("Фарм", "Baritone-режим активен — иду по маршруту к монетам", 4)
